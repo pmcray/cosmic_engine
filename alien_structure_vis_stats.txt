@@ -1,0 +1,13 @@
+OBJ File: alien.obj
+Vertices: 108
+Lines: 54
+
+Bounds:
+  X: [-0.80, 0.93]
+  Y: [0.00, 8.52]
+  Z: [0.00, 2.72]
+
+Dimensions:
+  Width (X):  1.73 m
+  Depth (Y):  8.52 m
+  Height (Z): 2.72 m

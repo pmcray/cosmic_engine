@@ -1,0 +1,8 @@
+# L-System Core OBJ Export
+# Vertices: 2
+# Edges: 1
+
+v 0.000000 0.000000 0.000000
+v 0.000000 1.000000 0.000000
+
+l 1 2

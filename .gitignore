@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Taichi & Compilation Caches
+.ti_workspace/
+.cache/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Cosmic Engine Specific: Data & Assets
+*.nc
+*.grd
+data/
+datasets/
+
+# Cosmic Engine Specific: Renders & Outputs
+*.mp4
+*.gif
+*.png
+*.jpg
+*.exr
+*.tiff
+outputs/
+renders/
+frames/

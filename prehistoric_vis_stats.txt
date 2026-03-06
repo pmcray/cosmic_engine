@@ -1,0 +1,13 @@
+OBJ File: prehistoric.obj
+Vertices: 150
+Lines: 75
+
+Bounds:
+  X: [-9.06, 9.06]
+  Y: [0.00, 38.82]
+  Z: [0.00, 23.12]
+
+Dimensions:
+  Width (X):  18.12 m
+  Depth (Y):  38.82 m
+  Height (Z): 23.12 m
