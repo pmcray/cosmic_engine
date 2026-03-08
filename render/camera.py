@@ -1,7 +1,5 @@
 import taichi as ti
 import math
-import taichi as ti
-import math
 import numpy as np
 
 @ti.data_oriented
