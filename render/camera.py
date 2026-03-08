@@ -1,6 +1,6 @@
 import taichi as ti
 import math
-iimport taichi as ti
+import taichi as ti
 import math
 import numpy as np
 
