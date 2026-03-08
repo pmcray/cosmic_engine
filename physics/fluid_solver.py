@@ -58,7 +58,7 @@ class FluidEngine:
         else: # Default: Jupiter
             self.band_freq = 14.0     # Slight frequency increase
             self.wind_mult = 1.8      # Slightly faster jets
-            self.shear_mult = 6.0     # CRITICAL: Major increase in chaos
+            self.shear_mult = 4.8     # Dialed back from the apocalyptic 6.0
             self.has_spot = 1
             self.color_1 = ti.Vector([1.00, 0.95, 0.88]) # Brighter Cream
             self.color_2 = ti.Vector([0.70, 0.20, 0.05]) # CRITICAL: Punchier, dark rust
@@ -195,13 +195,13 @@ class FluidEngine:
                     self.velocity[i, j][0] += -dy / (dist + 1e-5) * tangent_v
                     self.velocity[i, j][1] += dx / (dist + 1e-5) * tangent_v
 
-                    if ti.random() > 0.2:
+                    if ti.random() > 0.6: # Significantly slows the red dye flood
                         self.dye[i, j] = self.color_spot
             
             # 3. Coloring and Polar Caps
             polar_mask = ti.abs(lat - 0.5) * 2.0 
             
-            if ti.random() > 0.98: # Reduced injection to force clumping
+            if ti.random() > 0.94: # Faster global repaint to contain the storms
                 if wind_speed > 80.0 * self.wind_mult:
                     self.dye[i, j] = self.color_1 
                 elif wind_speed < -80.0 * self.wind_mult:
