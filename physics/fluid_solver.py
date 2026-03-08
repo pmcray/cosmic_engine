@@ -3,19 +3,74 @@ import math
 
 @ti.data_oriented
 class FluidEngine:
-    def __init__(self, res=512, dt=0.03, jacobi_iters=40, vorticity_strength=2.8):
+    def __init__(self, res=512, dt=0.03, jacobi_iters=40, vorticity_strength=2.8, planet_type="jupiter"):
         self.RES = res
         self.dt = dt
         self.jacobi_iters = jacobi_iters
         self.vorticity_strength = vorticity_strength
+        self.planet_type = planet_type.lower()
+
+        # --- PLANETARY PROFILES ---
+        if self.planet_type == "venus":
+            self.band_freq = 2.0      # Broad, unified super-rotation
+            self.wind_mult = 0.5      # Slower relative shear
+            self.shear_mult = 0.1     # Extremely smooth and smeary
+            self.has_spot = 0
+            self.color_1 = ti.Vector([0.85, 0.80, 0.65]) # Pale Yellow
+            self.color_2 = ti.Vector([0.75, 0.65, 0.45]) # Mustard
+            self.color_3 = ti.Vector([0.90, 0.85, 0.70]) # Cream
+            self.color_storm = ti.Vector([0.95, 0.95, 0.85]) 
+            self.color_spot = ti.Vector([0.0, 0.0, 0.0]) 
+
+        elif self.planet_type == "saturn":
+            self.band_freq = 10.0
+            self.wind_mult = 1.8      # Fastest jet streams
+            self.shear_mult = 0.4     # Muted turbulence (hazy)
+            self.has_spot = 0         
+            self.color_1 = ti.Vector([0.85, 0.75, 0.55]) # Golden tan
+            self.color_2 = ti.Vector([0.70, 0.60, 0.45]) # Deeper gold
+            self.color_3 = ti.Vector([0.90, 0.85, 0.70]) # Pale gold
+            self.color_storm = ti.Vector([0.95, 0.95, 0.90])
+            self.color_spot = ti.Vector([0.0, 0.0, 0.0])
+
+        elif self.planet_type == "uranus":
+            self.band_freq = 6.0
+            self.wind_mult = 0.8
+            self.shear_mult = 0.3 
+            self.has_spot = 1         # Generates a Dark Spot
+            self.color_1 = ti.Vector([0.40, 0.75, 0.85]) # Cyan
+            self.color_2 = ti.Vector([0.25, 0.60, 0.75]) # Deep Cyan
+            self.color_3 = ti.Vector([0.50, 0.80, 0.90]) # Pale Blue
+            self.color_storm = ti.Vector([0.90, 0.95, 1.0]) # Methane cirrus
+            self.color_spot = ti.Vector([0.15, 0.40, 0.55]) # Dark Methane Spot
+
+        elif self.planet_type == "hot_jupiter":
+            self.band_freq = 8.0
+            self.wind_mult = 2.5      # Violent speeds
+            self.shear_mult = 2.0     # Extreme turbulence
+            self.has_spot = 0
+            self.color_1 = ti.Vector([0.10, 0.10, 0.15]) # Ash grey
+            self.color_2 = ti.Vector([0.90, 0.20, 0.05]) # Magma red
+            self.color_3 = ti.Vector([1.00, 0.50, 0.10]) # Glowing orange
+            self.color_storm = ti.Vector([1.00, 0.90, 0.50]) 
+            self.color_spot = ti.Vector([0.0, 0.0, 0.0])
+
+        else: # Default: Jupiter
+            self.band_freq = 14.0
+            self.wind_mult = 1.0
+            self.shear_mult = 1.0
+            self.has_spot = 1
+            self.color_1 = ti.Vector([0.90, 0.85, 0.80]) # Cream
+            self.color_2 = ti.Vector([0.60, 0.30, 0.20]) # Rust
+            self.color_3 = ti.Vector([0.80, 0.55, 0.35]) # Ochre
+            self.color_storm = ti.Vector([1.0, 0.98, 0.95]) # White
+            self.color_spot = ti.Vector([0.65, 0.20, 0.10]) # Deep Red
 
         # Core Fields
         self.velocity = ti.Vector.field(2, dtype=float, shape=(self.RES, self.RES))
         self.new_velocity = ti.Vector.field(2, dtype=float, shape=(self.RES, self.RES))
         self.dye = ti.Vector.field(3, dtype=float, shape=(self.RES, self.RES))
         self.new_dye = ti.Vector.field(3, dtype=float, shape=(self.RES, self.RES))
-
-        # Pressure and Vorticity Fields
         self.pressure = ti.field(dtype=float, shape=(self.RES, self.RES))
         self.new_pressure = ti.field(dtype=float, shape=(self.RES, self.RES))
         self.divergence = ti.field(dtype=float, shape=(self.RES, self.RES))
@@ -103,48 +158,57 @@ class FluidEngine:
     def inject_zonal_jets(self, frame: int):
         for i, j in self.velocity:
             lat = float(j) / self.RES
+            lon = float(i) / self.RES
+            time = float(frame) * 0.05
             
-            # 1. Shear Instability: Add a lateral wobble to the wind bands
-            wobble = ti.sin(float(i) * 0.02 + float(frame) * 0.05) * 0.02
-            band_profile = ti.sin((lat + wobble) * 12.0 * math.pi)
+            wobble1 = ti.sin(lon * 15.0 + time) * 0.03 * self.shear_mult
+            wobble2 = ti.cos(lon * 45.0 - time * 1.5) * 0.015 * self.shear_mult
+            wobble3 = ti.sin(lon * 90.0 + time * 2.0) * 0.005 * self.shear_mult
             
-            # High-frequency noise that peaks precisely at the boundary layers
-            shear_noise = ti.sin(float(i) * 0.1) * ti.cos(float(j) * 0.1 + float(frame) * 0.2)
-            boundary_mask = 1.0 - ti.abs(band_profile) 
+            total_wobble = wobble1 + wobble2 + wobble3
+            band_profile = ti.sin((lat + total_wobble) * self.band_freq * math.pi)
             
-            wind_speed = (band_profile * 120.0) + (shear_noise * boundary_mask * 80.0)
+            shear_mask = 1.0 - ti.abs(band_profile)
+            shear_mask = shear_mask * shear_mask 
+            micro_turbulence = (ti.sin(lon * 120.0) * ti.cos(lat * 120.0 + time)) * 180.0 * self.shear_mult
+            
+            wind_speed = (band_profile * 140.0 * self.wind_mult) + (micro_turbulence * shear_mask)
             self.velocity[i, j][0] = wind_speed
             
-            # 2. Cyclogenesis: Initialize a massive anticyclone (Great Red Spot)
-            spot_x = self.RES * 0.45
-            spot_y = self.RES * 0.35
-            dx = float(i) - spot_x
-            dy = float(j) - spot_y
-            dist = ti.sqrt(dx**2 + dy**2)
-            spot_radius = self.RES * 0.09
-            
-            if dist < spot_radius:
-                # Calculate tangential velocity for rotation
-                tangent_v = (dist / spot_radius) * 160.0
-                # Counter-clockwise rotation
-                self.velocity[i, j][0] += -dy / (dist + 1e-5) * tangent_v
-                self.velocity[i, j][1] += dx / (dist + 1e-5) * tangent_v
+            # Dynamic Cyclogenesis
+            if self.has_spot == 1:
+                spot_x = self.RES * 0.45
+                spot_y = self.RES * 0.35
+                dx = float(i) - spot_x
+                dy = float(j) - spot_y
+                dist = ti.sqrt(dx**2 + dy**2)
+                spot_radius = self.RES * 0.08
+                
+                spot_distortion = ti.sin(ti.math.atan2(dy, dx) * 5.0 + time) * 0.012 * self.RES * self.shear_mult
+                
+                if dist < spot_radius + spot_distortion:
+                    tangent_v = (dist / spot_radius) * 200.0 * self.wind_mult
+                    self.velocity[i, j][0] += -dy / (dist + 1e-5) * tangent_v
+                    self.velocity[i, j][1] += dx / (dist + 1e-5) * tangent_v
 
-                # Lock the spot color to deep terracotta
-                if ti.random() > 0.4:
-                    self.dye[i, j] = ti.Vector([0.65, 0.25, 0.15])
+                    if ti.random() > 0.3:
+                        self.dye[i, j] = self.color_spot
             
-            # Standard planetary coloring
-            elif ti.random() > 0.85:
-                if wind_speed > 60.0:
-                    self.dye[i, j] = ti.Vector([0.95, 0.85, 0.75]) 
-                elif wind_speed < -60.0:
-                    self.dye[i, j] = ti.Vector([0.7, 0.35, 0.25]) 
+            # Application of the chosen color palette
+            if ti.random() > 0.92: 
+                if wind_speed > 80.0 * self.wind_mult:
+                    self.dye[i, j] = self.color_1 
+                elif wind_speed < -80.0 * self.wind_mult:
+                    self.dye[i, j] = self.color_2 
                 else:
-                    self.dye[i, j] = ti.Vector([0.8, 0.5, 0.3]) 
+                    self.dye[i, j] = self.color_3 
                     
-            if ti.random() > 0.999:
-                self.dye[i, j] = ti.Vector([1.0, 0.98, 0.95])
+            # Storm Pop-ups scaled by shear multiplier
+            storm_trigger = ti.sin(lon * 50.0 + time) * ti.cos(lat * 40.0 - time)
+            if storm_trigger > 0.95 and ti.random() > 0.8:
+                self.dye[i, j] = self.color_storm
+                self.velocity[i, j][0] += (ti.random() - 0.5) * 150.0 * self.shear_mult
+                self.velocity[i, j][1] += (ti.random() - 0.5) * 150.0 * self.shear_mult
 
     @ti.kernel
     def copy_fields(self, f1: ti.template(), f2: ti.template()):
