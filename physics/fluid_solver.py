@@ -12,8 +12,8 @@ class FluidEngine:
 
         # --- PLANETARY PROFILES ---
         if self.planet_type == "venus":
-            self.band_freq = 2.0      # Broad, unified super-rotation
-            self.wind_mult = 0.5      # Slower relative shear
+            self.band_freq = 2.0      
+            self.wind_mult = 0.5      
             self.shear_mult = 0.1     # Extremely smooth and smeary
             self.has_spot = 0
             self.color_1 = ti.Vector([0.85, 0.80, 0.65]) # Pale Yellow
@@ -24,7 +24,7 @@ class FluidEngine:
 
         elif self.planet_type == "saturn":
             self.band_freq = 10.0
-            self.wind_mult = 1.8      # Fastest jet streams
+            self.wind_mult = 1.8      
             self.shear_mult = 0.4     # Muted turbulence (hazy)
             self.has_spot = 0         
             self.color_1 = ti.Vector([0.85, 0.75, 0.55]) # Golden tan
@@ -37,7 +37,7 @@ class FluidEngine:
             self.band_freq = 6.0
             self.wind_mult = 0.8
             self.shear_mult = 0.3 
-            self.has_spot = 1         # Generates a Dark Spot
+            self.has_spot = 1         
             self.color_1 = ti.Vector([0.40, 0.75, 0.85]) # Cyan
             self.color_2 = ti.Vector([0.25, 0.60, 0.75]) # Deep Cyan
             self.color_3 = ti.Vector([0.50, 0.80, 0.90]) # Pale Blue
@@ -46,8 +46,8 @@ class FluidEngine:
 
         elif self.planet_type == "hot_jupiter":
             self.band_freq = 8.0
-            self.wind_mult = 2.5      # Violent speeds
-            self.shear_mult = 2.0     # Extreme turbulence
+            self.wind_mult = 2.5      
+            self.shear_mult = 2.0     
             self.has_spot = 0
             self.color_1 = ti.Vector([0.10, 0.10, 0.15]) # Ash grey
             self.color_2 = ti.Vector([0.90, 0.20, 0.05]) # Magma red
@@ -56,15 +56,15 @@ class FluidEngine:
             self.color_spot = ti.Vector([0.0, 0.0, 0.0])
 
         else: # Default: Jupiter
-            self.band_freq = 14.0
-            self.wind_mult = 1.0
-            self.shear_mult = 1.0
+            self.band_freq = 12.0
+            self.wind_mult = 1.6      
+            self.shear_mult = 4.0     # Massive fractal shear (Juno style)
             self.has_spot = 1
-            self.color_1 = ti.Vector([0.90, 0.85, 0.80]) # Cream
-            self.color_2 = ti.Vector([0.60, 0.30, 0.20]) # Rust
-            self.color_3 = ti.Vector([0.80, 0.55, 0.35]) # Ochre
-            self.color_storm = ti.Vector([1.0, 0.98, 0.95]) # White
-            self.color_spot = ti.Vector([0.65, 0.20, 0.10]) # Deep Red
+            self.color_1 = ti.Vector([0.95, 0.90, 0.85]) # Ammonia Cream
+            self.color_2 = ti.Vector([0.55, 0.25, 0.15]) # Deep Terracotta
+            self.color_3 = ti.Vector([0.35, 0.45, 0.55]) # Juno Polar Blue
+            self.color_storm = ti.Vector([1.0, 1.0, 1.0]) # Piercing White (String of Pearls)
+            self.color_spot = ti.Vector([0.75, 0.15, 0.05]) # Violent Red
 
         # Core Fields
         self.velocity = ti.Vector.field(2, dtype=float, shape=(self.RES, self.RES))
@@ -161,21 +161,25 @@ class FluidEngine:
             lon = float(i) / self.RES
             time = float(frame) * 0.05
             
-            wobble1 = ti.sin(lon * 15.0 + time) * 0.03 * self.shear_mult
-            wobble2 = ti.cos(lon * 45.0 - time * 1.5) * 0.015 * self.shear_mult
-            wobble3 = ti.sin(lon * 90.0 + time * 2.0) * 0.005 * self.shear_mult
-            
-            total_wobble = wobble1 + wobble2 + wobble3
-            band_profile = ti.sin((lat + total_wobble) * self.band_freq * math.pi)
-            
+            # 1. Fractal Turbulence (fBM)
+            turb = 0.0
+            amp = 1.0
+            freq = 1.0
+            for _ in ti.static(range(4)):
+                turb += ti.sin(lon * 80.0 * freq + time) * ti.cos(lat * 80.0 * freq - time) * amp
+                amp *= 0.5
+                freq *= 2.0
+                
+            wobble = ti.sin(lon * 15.0 + time) * 0.03 * self.shear_mult
+            band_profile = ti.sin((lat + wobble) * self.band_freq * math.pi)
             shear_mask = 1.0 - ti.abs(band_profile)
             shear_mask = shear_mask * shear_mask 
-            micro_turbulence = (ti.sin(lon * 120.0) * ti.cos(lat * 120.0 + time)) * 180.0 * self.shear_mult
             
+            micro_turbulence = turb * 180.0 * self.shear_mult
             wind_speed = (band_profile * 140.0 * self.wind_mult) + (micro_turbulence * shear_mask)
             self.velocity[i, j][0] = wind_speed
             
-            # Dynamic Cyclogenesis
+            # 2. Dynamic Cyclogenesis (The Great Red/Dark Spot)
             if self.has_spot == 1:
                 spot_x = self.RES * 0.45
                 spot_y = self.RES * 0.35
@@ -184,31 +188,34 @@ class FluidEngine:
                 dist = ti.sqrt(dx**2 + dy**2)
                 spot_radius = self.RES * 0.08
                 
-                spot_distortion = ti.sin(ti.math.atan2(dy, dx) * 5.0 + time) * 0.012 * self.RES * self.shear_mult
+                spot_distortion = turb * 0.015 * self.RES * self.shear_mult
                 
                 if dist < spot_radius + spot_distortion:
-                    tangent_v = (dist / spot_radius) * 200.0 * self.wind_mult
+                    tangent_v = (dist / spot_radius) * 250.0 * self.wind_mult
                     self.velocity[i, j][0] += -dy / (dist + 1e-5) * tangent_v
                     self.velocity[i, j][1] += dx / (dist + 1e-5) * tangent_v
 
-                    if ti.random() > 0.3:
+                    if ti.random() > 0.2:
                         self.dye[i, j] = self.color_spot
             
-            # Application of the chosen color palette
+            # 3. Coloring and Polar Caps
+            polar_mask = ti.abs(lat - 0.5) * 2.0 
+            
             if ti.random() > 0.92: 
                 if wind_speed > 80.0 * self.wind_mult:
                     self.dye[i, j] = self.color_1 
                 elif wind_speed < -80.0 * self.wind_mult:
                     self.dye[i, j] = self.color_2 
                 else:
-                    self.dye[i, j] = self.color_3 
+                    base_c = self.color_3 if polar_mask > 0.65 else self.color_1 * 0.8
+                    self.dye[i, j] = base_c
                     
-            # Storm Pop-ups scaled by shear multiplier
-            storm_trigger = ti.sin(lon * 50.0 + time) * ti.cos(lat * 40.0 - time)
-            if storm_trigger > 0.95 and ti.random() > 0.8:
+            # 4. "String of Pearls" Storm Pop-ups
+            pearl_trigger = ti.sin(lon * 40.0 + time * 2.0) * ti.cos(lat * 30.0)
+            if pearl_trigger > 0.98 and ti.random() > 0.7:
                 self.dye[i, j] = self.color_storm
-                self.velocity[i, j][0] += (ti.random() - 0.5) * 150.0 * self.shear_mult
-                self.velocity[i, j][1] += (ti.random() - 0.5) * 150.0 * self.shear_mult
+                self.velocity[i, j][0] += (ti.random() - 0.5) * 300.0 * self.shear_mult
+                self.velocity[i, j][1] += (ti.random() - 0.5) * 300.0 * self.shear_mult
 
     @ti.kernel
     def copy_fields(self, f1: ti.template(), f2: ti.template()):
