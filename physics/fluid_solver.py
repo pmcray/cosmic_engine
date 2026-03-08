@@ -102,19 +102,49 @@ class FluidEngine:
     @ti.kernel
     def inject_zonal_jets(self, frame: int):
         for i, j in self.velocity:
-            noise = ti.sin(float(i) * 0.05 + float(frame) * 0.1) * 30.0
-            wind_speed = ti.sin((float(j) / self.RES) * 8.0 * math.pi) * 100.0 + noise
+            lat = float(j) / self.RES
+            
+            # 1. Shear Instability: Add a lateral wobble to the wind bands
+            wobble = ti.sin(float(i) * 0.02 + float(frame) * 0.05) * 0.02
+            band_profile = ti.sin((lat + wobble) * 12.0 * math.pi)
+            
+            # High-frequency noise that peaks precisely at the boundary layers
+            shear_noise = ti.sin(float(i) * 0.1) * ti.cos(float(j) * 0.1 + float(frame) * 0.2)
+            boundary_mask = 1.0 - ti.abs(band_profile) 
+            
+            wind_speed = (band_profile * 120.0) + (shear_noise * boundary_mask * 80.0)
             self.velocity[i, j][0] = wind_speed
             
-            if ti.random() > 0.85:
-                if wind_speed > 40.0:
-                    self.dye[i, j] = ti.Vector([0.9, 0.8, 0.7]) 
-                elif wind_speed < -40.0:
-                    self.dye[i, j] = ti.Vector([0.7, 0.3, 0.2]) 
+            # 2. Cyclogenesis: Initialize a massive anticyclone (Great Red Spot)
+            spot_x = self.RES * 0.45
+            spot_y = self.RES * 0.35
+            dx = float(i) - spot_x
+            dy = float(j) - spot_y
+            dist = ti.sqrt(dx**2 + dy**2)
+            spot_radius = self.RES * 0.09
+            
+            if dist < spot_radius:
+                # Calculate tangential velocity for rotation
+                tangent_v = (dist / spot_radius) * 160.0
+                # Counter-clockwise rotation
+                self.velocity[i, j][0] += -dy / (dist + 1e-5) * tangent_v
+                self.velocity[i, j][1] += dx / (dist + 1e-5) * tangent_v
+
+                # Lock the spot color to deep terracotta
+                if ti.random() > 0.4:
+                    self.dye[i, j] = ti.Vector([0.65, 0.25, 0.15])
+            
+            # Standard planetary coloring
+            elif ti.random() > 0.85:
+                if wind_speed > 60.0:
+                    self.dye[i, j] = ti.Vector([0.95, 0.85, 0.75]) 
+                elif wind_speed < -60.0:
+                    self.dye[i, j] = ti.Vector([0.7, 0.35, 0.25]) 
                 else:
                     self.dye[i, j] = ti.Vector([0.8, 0.5, 0.3]) 
-            if ti.random() > 0.998:
-                self.dye[i, j] = ti.Vector([1.0, 0.95, 0.9])
+                    
+            if ti.random() > 0.999:
+                self.dye[i, j] = ti.Vector([1.0, 0.98, 0.95])
 
     @ti.kernel
     def copy_fields(self, f1: ti.template(), f2: ti.template()):
@@ -122,7 +152,6 @@ class FluidEngine:
             f1[i, j] = f2[i, j]
 
     def step(self, frame: int):
-        """Executes one full frame of the fluid simulation."""
         self.inject_zonal_jets(frame)
         self.compute_vorticity()
         self.apply_vorticity_confinement()
