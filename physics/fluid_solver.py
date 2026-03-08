@@ -56,15 +56,15 @@ class FluidEngine:
             self.color_spot = ti.Vector([0.0, 0.0, 0.0])
 
         else: # Default: Jupiter
-            self.band_freq = 12.0
-            self.wind_mult = 1.6      
-            self.shear_mult = 4.0     # Massive fractal shear (Juno style)
+            self.band_freq = 14.0     # Slight frequency increase
+            self.wind_mult = 1.8      # Slightly faster jets
+            self.shear_mult = 6.0     # CRITICAL: Major increase in chaos
             self.has_spot = 1
-            self.color_1 = ti.Vector([0.95, 0.90, 0.85]) # Ammonia Cream
-            self.color_2 = ti.Vector([0.55, 0.25, 0.15]) # Deep Terracotta
-            self.color_3 = ti.Vector([0.35, 0.45, 0.55]) # Juno Polar Blue
-            self.color_storm = ti.Vector([1.0, 1.0, 1.0]) # Piercing White (String of Pearls)
-            self.color_spot = ti.Vector([0.75, 0.15, 0.05]) # Violent Red
+            self.color_1 = ti.Vector([1.00, 0.95, 0.88]) # Brighter Cream
+            self.color_2 = ti.Vector([0.70, 0.20, 0.05]) # CRITICAL: Punchier, dark rust
+            self.color_3 = ti.Vector([0.45, 0.55, 0.65]) # Saturated Polar Blue
+            self.color_storm = ti.Vector([1.0, 1.0, 1.0]) # White
+            self.color_spot = ti.Vector([0.80, 0.10, 0.00]) # Violent Red
 
         # Core Fields
         self.velocity = ti.Vector.field(2, dtype=float, shape=(self.RES, self.RES))
@@ -201,7 +201,7 @@ class FluidEngine:
             # 3. Coloring and Polar Caps
             polar_mask = ti.abs(lat - 0.5) * 2.0 
             
-            if ti.random() > 0.92: 
+            if ti.random() > 0.98: # Reduced injection to force clumping
                 if wind_speed > 80.0 * self.wind_mult:
                     self.dye[i, j] = self.color_1 
                 elif wind_speed < -80.0 * self.wind_mult:
