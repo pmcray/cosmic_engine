@@ -126,8 +126,22 @@ class SphereCamera:
                             shadow = 1.0 - (r_alpha * 0.85) # Allows partial light through
                             
                 diffuse = ti.max(0.0, n[0]*light_dir[0] + n[1]*light_dir[1] + n[2]*light_dir[2]) * shadow
-                rim = (1.0 - ti.max(0.0, -(rd[0]*n[0] + rd[1]*n[1] + rd[2]*n[2])))**4.0 * 0.3
-                sphere_color = fluid_color * diffuse + ti.Vector([rim, rim, rim]) * diffuse
+                
+                # Rim lighting and volumetric aerosol scattering
+                view_dir = ti.Vector([-rd[0], -rd[1], -rd[2]])
+                ndotv = ti.max(0.0, n[0]*view_dir[0] + n[1]*view_dir[1] + n[2]*view_dir[2])
+                rim = (1.0 - ndotv)**3.0 * 0.6
+                rim_color = ti.Vector([1.0, 0.9, 0.8]) * rim * diffuse
+                
+                # Volumetric aerosol scattering
+                half_vec = light_dir + view_dir
+                half_length = ti.sqrt(half_vec[0]**2 + half_vec[1]**2 + half_vec[2]**2) + 1e-5
+                half_vec /= half_length
+                ndoth = ti.max(0.0, n[0]*half_vec[0] + n[1]*half_vec[1] + n[2]*half_vec[2])
+                aerosol_scatter = (1.0 - ndotv) * (ndoth**8.0) * 0.8
+                aerosol_color = ti.Vector([0.95, 0.85, 0.75]) * aerosol_scatter * shadow
+
+                sphere_color = fluid_color * diffuse + rim_color + aerosol_color
                 
             if hit_ring:
                 p_ring = ro + rd * t_ring

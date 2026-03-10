@@ -58,13 +58,13 @@ class FluidEngine:
         else: # Default: Jupiter
             self.band_freq = 14.0     # Slight frequency increase
             self.wind_mult = 1.8      # Slightly faster jets
-            self.shear_mult = 4.8     # Dialed back from the apocalyptic 6.0
+            self.shear_mult = 5.0     # Upgraded to 5.0
             self.has_spot = 1
-            self.color_1 = ti.Vector([1.00, 0.95, 0.88]) # Brighter Cream
-            self.color_2 = ti.Vector([0.70, 0.20, 0.05]) # CRITICAL: Punchier, dark rust
-            self.color_3 = ti.Vector([0.45, 0.55, 0.65]) # Saturated Polar Blue
+            self.color_1 = ti.Vector([0.90, 0.95, 0.95]) # High-contrast ammonia
+            self.color_2 = ti.Vector([0.80, 0.20, 0.05]) # High-contrast rust
+            self.color_3 = ti.Vector([0.85, 0.90, 0.90]) # Base ammonia
             self.color_storm = ti.Vector([1.0, 1.0, 1.0]) # White
-            self.color_spot = ti.Vector([0.80, 0.10, 0.00]) # Violent Red
+            self.color_spot = ti.Vector([0.60, 0.05, 0.00]) # Violent dark rust/red
 
         # Core Fields
         self.velocity = ti.Vector.field(2, dtype=float, shape=(self.RES, self.RES))
@@ -161,11 +161,11 @@ class FluidEngine:
             lon = float(i) / self.RES
             time = float(frame) * 0.05
             
-            # 1. Fractal Turbulence (fBM)
+            # 1. Fractional Micro-Turbulence (fBM)
             turb = 0.0
             amp = 1.0
             freq = 1.0
-            for _ in ti.static(range(4)):
+            for _ in ti.static(range(6)):
                 turb += ti.sin(lon * 80.0 * freq + time) * ti.cos(lat * 80.0 * freq - time) * amp
                 amp *= 0.5
                 freq *= 2.0
@@ -210,12 +210,12 @@ class FluidEngine:
                     base_c = self.color_3 if polar_mask > 0.65 else self.color_1 * 0.8
                     self.dye[i, j] = base_c
                     
-            # 4. "String of Pearls" Storm Pop-ups
-            pearl_trigger = ti.sin(lon * 40.0 + time * 2.0) * ti.cos(lat * 30.0)
-            if pearl_trigger > 0.98 and ti.random() > 0.7:
+            # 4. Explosive Storm Pop-ups
+            storm_trigger = ti.sin(lon * 40.0 + time * 2.0) * ti.cos(lat * 30.0) + turb * 0.2
+            if storm_trigger > 1.05 and ti.random() > 0.8:
                 self.dye[i, j] = self.color_storm
-                self.velocity[i, j][0] += (ti.random() - 0.5) * 300.0 * self.shear_mult
-                self.velocity[i, j][1] += (ti.random() - 0.5) * 300.0 * self.shear_mult
+                self.velocity[i, j][0] += (ti.random() - 0.5) * 800.0 * self.shear_mult
+                self.velocity[i, j][1] += (ti.random() - 0.5) * 800.0 * self.shear_mult
 
     @ti.kernel
     def copy_fields(self, f1: ti.template(), f2: ti.template()):
