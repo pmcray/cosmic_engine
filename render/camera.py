@@ -29,6 +29,47 @@ class SphereCamera:
                (c01 * (1.0 - fx) + c11 * fx) * fy
 
     @ti.func
+    def get_cloud_height(self, field: ti.template(), u, v):
+        # We use the luminance of the fluid dye as a height map
+        color = self.bilinear_interp(field, ti.Vector([u * self.fluid_res, v * self.fluid_res]))
+        # Approximate luminance
+        return color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114
+
+    @ti.func
+    def perturbed_normal(self, field: ti.template(), tex_u, tex_v, n):
+        # Sample surrounding points to calculate gradient
+        eps = 1.0 / self.fluid_res
+        
+        # We need a tangent space to perturb the normal along the surface
+        # A simple way is to find two vectors perpendicular to n
+        up = ti.Vector([0.0, 1.0, 0.0])
+        if ti.abs(n[1]) > 0.999:
+            up = ti.Vector([1.0, 0.0, 0.0])
+            
+        tangent = ti.math.cross(up, n)
+        tangent /= ti.sqrt(tangent[0]**2 + tangent[1]**2 + tangent[2]**2)
+        bitangent = ti.math.cross(n, tangent)
+        
+        h_center = self.get_cloud_height(field, tex_u, tex_v)
+        h_right = self.get_cloud_height(field, tex_u + eps, tex_v)
+        h_up = self.get_cloud_height(field, tex_u, tex_v + eps)
+        
+        # Gradient in texture space
+        du = (h_right - h_center) * 15.0 # Bump strength multiplier
+        dv = (h_up - h_center) * 15.0
+        
+        # Perturb normal
+        new_n = n - (tangent * du) - (bitangent * dv)
+        new_n /= ti.sqrt(new_n[0]**2 + new_n[1]**2 + new_n[2]**2)
+        
+        # Mix the perturbed normal with the original to control the strength
+        bump_strength = 0.8
+        final_n = n * (1.0 - bump_strength) + new_n * bump_strength
+        final_n /= ti.sqrt(final_n[0]**2 + final_n[1]**2 + final_n[2]**2)
+        
+        return final_n
+
+    @ti.func
     def rot_x(self, v, angle):
         c = ti.cos(angle)
         s = ti.sin(angle)
@@ -112,6 +153,9 @@ class SphereCamera:
                 tex_u = (phi / (2.0 * math.pi)) + 0.5
                 tex_v = (theta / math.pi) + 0.5
                 
+                # 3D Cloud Relief (Perturb Normal)
+                n = self.perturbed_normal(render_buffer, tex_u, tex_v, n)
+                
                 fluid_color = self.bilinear_interp(render_buffer, ti.Vector([tex_u * self.fluid_res, tex_v * self.fluid_res]))
                 
                 # Soft Translucent Shadows casting ON the planet
@@ -125,12 +169,20 @@ class SphereCamera:
                             r_alpha, _ = self.sample_ring(d_shad)
                             shadow = 1.0 - (r_alpha * 0.85) # Allows partial light through
                             
+                # Enhanced Self-Shadowing for clouds
+                # The normal is perturbed, creating stark shadows near the terminator
                 diffuse = ti.max(0.0, n[0]*light_dir[0] + n[1]*light_dir[1] + n[2]*light_dir[2]) * shadow
                 
                 # Rim lighting and volumetric aerosol scattering
                 view_dir = ti.Vector([-rd[0], -rd[1], -rd[2]])
                 ndotv = ti.max(0.0, n[0]*view_dir[0] + n[1]*view_dir[1] + n[2]*view_dir[2])
                 rim = (1.0 - ndotv)**3.0 * 0.6
+                
+                # Rayleigh Atmospheric Halo (Limb Glow)
+                # Adds a glowing rim even in shadow at extreme angles
+                limb_glow = (1.0 - ndotv)**5.0 * 0.5
+                limb_color = ti.Vector([0.3, 0.5, 0.9]) * limb_glow
+                
                 rim_color = ti.Vector([1.0, 0.9, 0.8]) * rim * diffuse
                 
                 # Volumetric aerosol scattering
@@ -141,7 +193,7 @@ class SphereCamera:
                 aerosol_scatter = (1.0 - ndotv) * (ndoth**8.0) * 0.8
                 aerosol_color = ti.Vector([0.95, 0.85, 0.75]) * aerosol_scatter * shadow
 
-                sphere_color = fluid_color * diffuse + rim_color + aerosol_color
+                sphere_color = fluid_color * diffuse + rim_color + aerosol_color + limb_color
                 
             if hit_ring:
                 p_ring = ro + rd * t_ring
@@ -196,7 +248,20 @@ class SphereCamera:
                 
                 accumulated_color += self.cast_ray(u, v, light_dir, render_buffer)
                 
-            self.final_output[i, j] = accumulated_color / float(self.samples)
+            final_color = accumulated_color / float(self.samples)
+            
+            # ACES Tone Mapping
+            a = 2.51
+            b = 0.03
+            c = 2.43
+            d = 0.59
+            e = 0.14
+            color = (final_color * (a * final_color + b)) / (final_color * (c * final_color + d) + e)
+            
+            # Spacecraft Sensor Noise
+            noise = (ti.random() - 0.5) * 0.04
+            
+            self.final_output[i, j] = color + ti.Vector([noise, noise, noise])
 
     def get_image_data(self):
         return np.clip(self.final_output.to_numpy(), 0.0, 1.0)

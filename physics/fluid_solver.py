@@ -62,7 +62,7 @@ class FluidEngine:
             self.has_spot = 1
             self.color_1 = ti.Vector([0.90, 0.95, 0.95]) # High-contrast ammonia
             self.color_2 = ti.Vector([0.80, 0.20, 0.05]) # High-contrast rust
-            self.color_3 = ti.Vector([0.85, 0.90, 0.90]) # Base ammonia
+            self.color_3 = ti.Vector([0.15, 0.35, 0.65]) # Deep Juno Polar Blue
             self.color_storm = ti.Vector([1.0, 1.0, 1.0]) # White
             self.color_spot = ti.Vector([0.60, 0.05, 0.00]) # Violent dark rust/red
 
