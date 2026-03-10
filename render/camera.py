@@ -9,6 +9,12 @@ class SphereCamera:
         self.render_res = render_res
         self.has_rings = has_rings
         self.samples = samples # Controls Anti-Aliasing quality
+        
+        # Camera transform parameters
+        self.cam_tilt = -0.45
+        self.cam_pan = 0.0
+        self.cam_roll = 0.0
+        
         self.final_output = ti.Vector.field(3, dtype=float, shape=(self.render_res, self.render_res))
 
     @ti.func
@@ -76,6 +82,18 @@ class SphereCamera:
         return ti.Vector([v[0], v[1]*c - v[2]*s, v[1]*s + v[2]*c])
 
     @ti.func
+    def rot_y(self, v, angle):
+        c = ti.cos(angle)
+        s = ti.sin(angle)
+        return ti.Vector([v[0]*c + v[2]*s, v[1], -v[0]*s + v[2]*c])
+        
+    @ti.func
+    def rot_z(self, v, angle):
+        c = ti.cos(angle)
+        s = ti.sin(angle)
+        return ti.Vector([v[0]*c - v[1]*s, v[0]*s + v[1]*c, v[2]])
+
+    @ti.func
     def sample_ring(self, dist):
         """Generates soft, continuous ring density and color."""
         n_dist = (dist - 1.2) / 1.2 
@@ -106,9 +124,14 @@ class SphereCamera:
         rd = ti.Vector([u, v, 1.5]) 
         rd /= ti.sqrt(rd[0]**2 + rd[1]**2 + rd[2]**2)
         
-        tilt = -0.45 
-        ro = self.rot_x(ro, tilt)
-        rd = self.rot_x(rd, tilt)
+        # Apply camera rotations (roll, tilt, pan)
+        rd = self.rot_z(rd, self.cam_roll)
+        
+        ro = self.rot_x(ro, self.cam_tilt)
+        rd = self.rot_x(rd, self.cam_tilt)
+        
+        ro = self.rot_y(ro, self.cam_pan)
+        rd = self.rot_y(rd, self.cam_pan)
         
         hit_sphere = False
         t_sphere = 1e10

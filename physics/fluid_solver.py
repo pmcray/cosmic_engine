@@ -10,6 +10,8 @@ class FluidEngine:
         self.vorticity_strength = vorticity_strength
         self.planet_type = planet_type.lower()
         self.has_pearls = 0
+        import random
+        self.seed_offset = random.random() * 10000.0
 
         # --- PLANETARY PROFILES ---
         if self.planet_type == "venus":
@@ -58,17 +60,22 @@ class FluidEngine:
 
         else: # Default: Jupiter
             self.jacobi_iters = 80
-            self.vorticity_strength = 8.0
-            self.band_freq = 14.0     # Slight frequency increase
-            self.wind_mult = 1.8      # Slightly faster jets
-            self.shear_mult = 5.0     # Upgraded to 5.0
-            self.has_spot = 1
-            self.has_pearls = 1
-            self.color_1 = ti.Vector([0.90, 0.95, 0.95]) # High-contrast ammonia
-            self.color_2 = ti.Vector([0.80, 0.20, 0.05]) # High-contrast rust
-            self.color_3 = ti.Vector([0.15, 0.35, 0.65]) # Deep Juno Polar Blue
-            self.color_storm = ti.Vector([1.0, 1.0, 1.0]) # White
-            self.color_spot = ti.Vector([0.60, 0.05, 0.00]) # Violent dark rust/red
+            self.vorticity_strength = 8.0 + random.uniform(-2.0, 2.0)
+            self.band_freq = 14.0 + random.uniform(-3.0, 3.0)
+            self.wind_mult = 1.8 + random.uniform(-0.4, 0.4)
+            self.shear_mult = 5.0 + random.uniform(-1.0, 1.5)
+            self.has_spot = 1 if random.random() > 0.3 else 0
+            self.has_pearls = 1 if random.random() > 0.3 else 0
+            
+            # Slightly randomize colors for variety
+            c1_base = [0.90, 0.95, 0.95]
+            self.color_1 = ti.Vector([c1_base[0] + random.uniform(-0.05, 0.05), c1_base[1] + random.uniform(-0.05, 0.05), c1_base[2] + random.uniform(-0.05, 0.05)])
+            c2_base = [0.80, 0.20, 0.05]
+            self.color_2 = ti.Vector([c2_base[0] + random.uniform(-0.1, 0.1), c2_base[1] + random.uniform(-0.05, 0.05), c2_base[2] + random.uniform(-0.02, 0.02)])
+            c3_base = [0.15, 0.35, 0.65] # Juno Polar Blue
+            self.color_3 = ti.Vector([c3_base[0] + random.uniform(-0.05, 0.05), c3_base[1] + random.uniform(-0.1, 0.1), c3_base[2] + random.uniform(-0.1, 0.1)])
+            self.color_storm = ti.Vector([1.0, 1.0, 1.0])
+            self.color_spot = ti.Vector([0.60 + random.uniform(-0.1, 0.1), 0.05 + random.uniform(-0.05, 0.05), 0.0])
 
         # Core Fields
         self.velocity = ti.Vector.field(2, dtype=float, shape=(self.RES, self.RES))
@@ -163,7 +170,7 @@ class FluidEngine:
         for i, j in self.velocity:
             lat = float(j) / self.RES
             lon = float(i) / self.RES
-            time = float(frame) * 0.05
+            time = float(frame) * 0.05 + self.seed_offset
             
             # 1. Fractional Micro-Turbulence (fBM)
             turb = 0.0
@@ -236,6 +243,31 @@ class FluidEngine:
                         tangent_v_p = (d_p / 0.5) * 600.0 * self.wind_mult
                         self.velocity[i, j][0] += -dy_p / d_p * tangent_v_p
                         self.velocity[i, j][1] += dx_p / d_p * tangent_v_p
+
+            # 6. Brown Barges (Dark equatorial cyclones)
+            if self.planet_type == "jupiter":
+                barge_lat = 0.62 # Northern hemisphere
+                barge_dist = ti.abs(lat - barge_lat)
+                if barge_dist < 0.03:
+                    barge_trigger = ti.sin(lon * 25.0 + time * 0.8) + turb * 0.5
+                    if barge_trigger > 1.2:
+                        self.dye[i, j] = self.color_2 * 0.5 # Very dark brown
+                        # Strong cyclonic rotation
+                        dx_b = lon * 25.0 % (2.0 * math.pi) - math.pi
+                        dy_b = (lat - barge_lat) * 25.0
+                        d_b = ti.sqrt(dx_b**2 + dy_b**2) + 1e-5
+                        tangent_v_b = (d_b / 0.8) * 400.0 * self.wind_mult
+                        self.velocity[i, j][0] += dy_b / d_b * tangent_v_b
+                        self.velocity[i, j][1] += -dx_b / d_b * tangent_v_b
+
+            # 7. Polar Cyclones (Juno style)
+            if self.planet_type == "jupiter" and polar_mask > 0.85:
+                # Dense clusters of vortices near poles
+                polar_vortex_trigger = ti.sin(lon * 80.0) * ti.cos(lat * 120.0 + time) + turb
+                if polar_vortex_trigger > 1.5:
+                    self.dye[i, j] = self.color_3 * 1.2 # Bright blue centers
+                    self.velocity[i, j][0] += (ti.random() - 0.5) * 1200.0 * self.shear_mult
+                    self.velocity[i, j][1] += (ti.random() - 0.5) * 1200.0 * self.shear_mult
 
     @ti.kernel
     def copy_fields(self, f1: ti.template(), f2: ti.template()):
