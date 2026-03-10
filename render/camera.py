@@ -55,15 +55,15 @@ class SphereCamera:
         h_up = self.get_cloud_height(field, tex_u, tex_v + eps)
         
         # Gradient in texture space
-        du = (h_right - h_center) * 15.0 # Bump strength multiplier
-        dv = (h_up - h_center) * 15.0
+        du = (h_right - h_center) * 50.0 # Extreme 3D relief for Juno style
+        dv = (h_up - h_center) * 50.0
         
         # Perturb normal
         new_n = n - (tangent * du) - (bitangent * dv)
         new_n /= ti.sqrt(new_n[0]**2 + new_n[1]**2 + new_n[2]**2)
         
         # Mix the perturbed normal with the original to control the strength
-        bump_strength = 0.8
+        bump_strength = 0.95 # Higher bump strength for deeper terminator shadows
         final_n = n * (1.0 - bump_strength) + new_n * bump_strength
         final_n /= ti.sqrt(final_n[0]**2 + final_n[1]**2 + final_n[2]**2)
         

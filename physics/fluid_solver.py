@@ -9,6 +9,7 @@ class FluidEngine:
         self.jacobi_iters = jacobi_iters
         self.vorticity_strength = vorticity_strength
         self.planet_type = planet_type.lower()
+        self.has_pearls = 0
 
         # --- PLANETARY PROFILES ---
         if self.planet_type == "venus":
@@ -56,10 +57,13 @@ class FluidEngine:
             self.color_spot = ti.Vector([0.0, 0.0, 0.0])
 
         else: # Default: Jupiter
+            self.jacobi_iters = 80
+            self.vorticity_strength = 8.0
             self.band_freq = 14.0     # Slight frequency increase
             self.wind_mult = 1.8      # Slightly faster jets
             self.shear_mult = 5.0     # Upgraded to 5.0
             self.has_spot = 1
+            self.has_pearls = 1
             self.color_1 = ti.Vector([0.90, 0.95, 0.95]) # High-contrast ammonia
             self.color_2 = ti.Vector([0.80, 0.20, 0.05]) # High-contrast rust
             self.color_3 = ti.Vector([0.15, 0.35, 0.65]) # Deep Juno Polar Blue
@@ -163,9 +167,9 @@ class FluidEngine:
             
             # 1. Fractional Micro-Turbulence (fBM)
             turb = 0.0
-            amp = 1.0
+            amp = 1.5
             freq = 1.0
-            for _ in ti.static(range(6)):
+            for _ in ti.static(range(8)):
                 turb += ti.sin(lon * 80.0 * freq + time) * ti.cos(lat * 80.0 * freq - time) * amp
                 amp *= 0.5
                 freq *= 2.0
@@ -216,6 +220,22 @@ class FluidEngine:
                 self.dye[i, j] = self.color_storm
                 self.velocity[i, j][0] += (ti.random() - 0.5) * 800.0 * self.shear_mult
                 self.velocity[i, j][1] += (ti.random() - 0.5) * 800.0 * self.shear_mult
+
+            # 5. String of Pearls (Jupiter-specific)
+            if self.has_pearls == 1:
+                pearl_lat = 0.28 # Southern hemisphere
+                lat_dist = ti.abs(lat - pearl_lat)
+                if lat_dist < 0.025:
+                    pearl_trigger = ti.sin(lon * 60.0 - time * 1.2)
+                    if pearl_trigger > 0.90:
+                        self.dye[i, j] = ti.Vector([0.95, 0.95, 1.0])
+                        # Fast rotating anticyclones
+                        dx_p = lon * 60.0 % (2.0 * math.pi) - math.pi
+                        dy_p = (lat - pearl_lat) * 60.0
+                        d_p = ti.sqrt(dx_p**2 + dy_p**2) + 1e-5
+                        tangent_v_p = (d_p / 0.5) * 600.0 * self.wind_mult
+                        self.velocity[i, j][0] += -dy_p / d_p * tangent_v_p
+                        self.velocity[i, j][1] += dx_p / d_p * tangent_v_p
 
     @ti.kernel
     def copy_fields(self, f1: ti.template(), f2: ti.template()):
