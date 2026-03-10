@@ -15,6 +15,14 @@ import json
 
 from simulator import load_biosim_from_file, BioSimulator, CompetitiveGrowthSimulation
 from lexer import LSystemParser
+import taichi as ti
+
+# Try to import fluid solver
+try:
+    from physics.fluid_solver import FluidEngine
+    HAS_FLUIDS = True
+except ImportError:
+    HAS_FLUIDS = False
 
 
 def main():
@@ -35,8 +43,8 @@ Examples:
   # High-resolution voxel grid
   python biosim.py --file examples/tree.l --iter 5 --voxel-res 0.25 --shadows
 
-  # Custom environment bounds
-  python biosim.py --file examples/plant.l --bounds -20,20,-20,20,0,50
+  # Fluid-based Tropism
+  python biosim.py --file examples/plant.l --iter 5 --fluid-tropism --planet-type jupiter
         """
     )
 
@@ -57,6 +65,11 @@ Examples:
     parser.add_argument('--gravity', type=float, help='Gravitropism susceptibility (0-1)')
     parser.add_argument('--photo', type=float, help='Phototropism susceptibility (0-1)')
     parser.add_argument('--pipe-exp', type=float, help='Pipe model exponent (default 2.0)')
+    
+    # Fluid parameters
+    parser.add_argument('--fluid-tropism', action='store_true', help='Enable fluid-based tropism (wind/currents)')
+    parser.add_argument('--fluid', type=float, help='Fluid tropism susceptibility (0-1)')
+    parser.add_argument('--planet-type', type=str, default='jupiter', help='Planet type for fluid simulation')
 
     # Output options
     parser.add_argument('--cylinders', action='store_true', help='Export as cylindrical meshes')
@@ -79,6 +92,17 @@ Examples:
         return 1
 
     try:
+        # Initialize Taichi and FluidEngine if requested
+        fluid_engine = None
+        if args.fluid_tropism or args.fluid is not None:
+            if not HAS_FLUIDS:
+                print("Warning: FluidEngine could not be imported. Ensure Taichi is installed.")
+            else:
+                ti.init(arch=ti.gpu) # try GPU first
+                fluid_engine = FluidEngine(planet_type=args.planet_type)
+                if args.verbose:
+                    print(f"Initialized FluidEngine with planet type: {args.planet_type}")
+
         # Parse bounds if provided
         bounds = None
         if args.bounds:
@@ -96,7 +120,8 @@ Examples:
         simulator = load_biosim_from_file(
             str(input_file),
             bounds=bounds,
-            voxel_resolution=args.voxel_res
+            voxel_resolution=args.voxel_res,
+            fluid_engine=fluid_engine
         )
 
         # Override tropism parameters if provided
@@ -104,6 +129,12 @@ Examples:
             simulator.gravity_susceptibility = args.gravity
         if args.photo is not None:
             simulator.photo_susceptibility = args.photo
+        if args.fluid is not None:
+            simulator.fluid_susceptibility = args.fluid
+        elif args.fluid_tropism and simulator.fluid_susceptibility == 0.0:
+            # Enable with default strength if flag is passed but not specified in L-system or args
+            simulator.fluid_susceptibility = 0.5
+            
         if args.pipe_exp is not None:
             simulator.pipe_exponent = args.pipe_exp
             simulator.metabolic_model.set_pipe_exponent(args.pipe_exp)
@@ -111,6 +142,7 @@ Examples:
         if args.verbose:
             print(f"  Gravitropism: {simulator.gravity_susceptibility}")
             print(f"  Phototropism: {simulator.photo_susceptibility}")
+            print(f"  Fluid Tropism: {simulator.fluid_susceptibility}")
             print(f"  Pipe exponent: {simulator.pipe_exponent}")
             print(f"  Voxel resolution: {args.voxel_res} m")
 

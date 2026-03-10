@@ -288,6 +288,140 @@ class VideoFactory:
 
         return Image.fromarray(blended)
 
+    def stabilize_existing_video(self, input_video: str, output_file: str,
+                                preset: Union[str, AestheticPreset] = "prehistoric",
+                                temporal_strength: float = 0.85,
+                                seed: Optional[int] = None,
+                                use_svd: bool = True,
+                                verbose: bool = False) -> str:
+        """
+        Stabilize and stylize an existing video (like Stargate) using SVD and temporal blending.
+        
+        Args:
+            input_video: Path to input mp4
+            output_file: Path to output mp4
+            preset: Aesthetic preset for styling
+            temporal_strength: How much of the previous frame to keep (for img2img blending)
+            seed: Random seed
+            use_svd: Whether to use Stable Video Diffusion for chunked coherent generation
+            verbose: Print progress
+            
+        Returns:
+            Output video path
+        """
+        if not self.use_diffusion or not DIFFUSION_AVAILABLE:
+            raise RuntimeError("Diffusion not available. Install required packages.")
+            
+        if not CV2_AVAILABLE:
+            raise RuntimeError("OpenCV is required to read input videos.")
+
+        self._load_diffusion_client()
+
+        # Create temp directory for frames
+        temp_dir = Path(output_file).parent / "temp_stabilize"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Read video frames
+        cap = cv2.VideoCapture(input_video)
+        input_frames = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            # Convert BGR to RGB
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            input_frames.append(Image.fromarray(frame))
+        cap.release()
+        
+        if not input_frames:
+            raise ValueError(f"Could not read any frames from {input_video}")
+            
+        print(f"Read {len(input_frames)} frames from {input_video}")
+        
+        # Resize to standard resolution to save VRAM
+        input_frames = [f.resize((self.resolution, self.resolution), Image.LANCZOS) for f in input_frames]
+        
+        ai_frames = []
+        
+        if use_svd and len(input_frames) > 0:
+            print("Using Stable Video Diffusion for temporal coherence...")
+            # SVD generates videos in chunks (e.g., 25 frames at a time).
+            # For a 600 frame video, we would process it in chunks, using the stylized
+            # last frame of the previous chunk as the init_image for the next.
+            # To keep it grounded to the original animation, we can blend SVD output with img2img.
+            
+            chunk_size = 25
+            for i in range(0, len(input_frames), chunk_size):
+                chunk = input_frames[i:i+chunk_size]
+                if verbose:
+                    print(f"Processing chunk {i//chunk_size + 1} ({len(chunk)} frames)")
+                
+                # Stylize the first frame of the chunk using img2img
+                init_frame = self.diffusion_client.refine_image(
+                    chunk[0], 
+                    prompt=preset if isinstance(preset, str) else preset.positive_prompt,
+                    strength=0.6,
+                    seed=seed
+                )
+                
+                # Generate SVD frames
+                svd_frames = self.diffusion_client.generate_video_from_image(
+                    init_frame,
+                    num_frames=len(chunk),
+                    fps=int(self.animation_gen.fps) if self.animation_gen else 30,
+                    seed=seed
+                )
+                
+                # Blend SVD frames with the original structured frames to keep the Stargate shape
+                for j, (svd_frame, orig_frame) in enumerate(zip(svd_frames, chunk)):
+                    # Optional: apply img2img on the original frame to stylize it
+                    stylized_orig = self.diffusion_client.refine_image(
+                        orig_frame,
+                        prompt=preset if isinstance(preset, str) else preset.positive_prompt,
+                        strength=0.4,
+                        seed=seed
+                    )
+                    
+                    # Blend the temporally smooth SVD frame with the structured stylized frame
+                    final_frame = self._blend_frames(svd_frame, stylized_orig, strength=0.5)
+                    
+                    frame_file = temp_dir / f"frame_{i+j:05d}.png"
+                    final_frame.save(frame_file)
+                    ai_frames.append(str(frame_file))
+                    
+        else:
+            print("Using img2img with temporal blending...")
+            previous_frame = None
+            for i, frame in enumerate(input_frames):
+                if verbose and i % 10 == 0:
+                    print(f"Stylizing frame {i+1}/{len(input_frames)}")
+                
+                # Apply img2img
+                new_frame = self.diffusion_client.refine_image(
+                    frame,
+                    prompt=preset if isinstance(preset, str) else preset.positive_prompt,
+                    strength=0.55,
+                    seed=seed
+                )
+                
+                if previous_frame is not None:
+                    # Blend with previous frame (temporal_strength: higher = more of previous frame)
+                    final_frame = self._blend_frames(previous_frame, new_frame, strength=1.0 - temporal_strength)
+                else:
+                    final_frame = new_frame
+                    
+                frame_file = temp_dir / f"frame_{i:05d}.png"
+                final_frame.save(frame_file)
+                ai_frames.append(str(frame_file))
+                previous_frame = final_frame
+
+        # Encode to video
+        print("Encoding stabilized video...")
+        video_path = self._encode_video(ai_frames, output_file, verbose)
+
+        print(f"Video saved to {video_path}")
+        return video_path
+
     def _encode_video(self, frame_files: List[str], output_file: str,
                      verbose: bool = False) -> str:
         """

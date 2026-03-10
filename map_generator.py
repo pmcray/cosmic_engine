@@ -420,6 +420,81 @@ class MapGenerator:
 
         return results
 
+class FlightPathGenerator:
+    """Generates procedural camera flight paths for seamless transitions."""
+
+    def __init__(self, start_camera: Camera, end_camera: Camera, num_frames: int):
+        """
+        Initialize the flight path generator.
+
+        Args:
+            start_camera: Initial camera state (e.g., planet surface)
+            end_camera: Final camera state (e.g., inside Stargate)
+            num_frames: Total number of frames for the transition
+        """
+        self.start_camera = start_camera
+        self.end_camera = end_camera
+        self.num_frames = num_frames
+
+    def _ease_in_out(self, t: float) -> float:
+        """Smooth ease-in-out interpolation curve."""
+        return t * t * (3.0 - 2.0 * t)
+
+    def get_camera_at_frame(self, frame_index: int) -> Camera:
+        """
+        Get the interpolated camera for a specific frame.
+
+        Args:
+            frame_index: Current frame number (0 to num_frames - 1)
+
+        Returns:
+            Interpolated Camera object
+        """
+        if self.num_frames <= 1:
+            return self.start_camera
+
+        # Calculate progress (0.0 to 1.0)
+        t = max(0.0, min(1.0, frame_index / float(self.num_frames - 1)))
+        
+        # Apply easing function for smoother motion
+        eased_t = self._ease_in_out(t)
+
+        # Spherical linear interpolation (Slerp) for direction/target, linear for position
+        # For simplicity in this procedural flight path, we'll use linear interpolation 
+        # combined with easing for all components, which gives a cinematic tracking shot feel.
+        pos = self.start_camera.position + (self.end_camera.position - self.start_camera.position) * eased_t
+        target = self.start_camera.target + (self.end_camera.target - self.start_camera.target) * eased_t
+        
+        # Slerp for the up vector to avoid flipping
+        start_up = self.start_camera.up
+        end_up = self.end_camera.up
+        dot = np.dot(start_up, end_up)
+        dot = np.clip(dot, -1.0, 1.0)
+        theta = np.arccos(dot) * eased_t
+        
+        relative_up = end_up - start_up * dot
+        if np.linalg.norm(relative_up) > 1e-6:
+            relative_up = relative_up / np.linalg.norm(relative_up)
+            up = start_up * np.cos(theta) + relative_up * np.sin(theta)
+        else:
+            up = start_up
+            
+        up = up / np.linalg.norm(up)
+
+        # Interpolate FOV if needed
+        fov = self.start_camera.fov + (self.end_camera.fov - self.start_camera.fov) * eased_t
+
+        return Camera(pos, target, up, fov=fov, aspect=self.start_camera.aspect)
+
+    def generate_path(self) -> List[Camera]:
+        """
+        Generate the full sequence of cameras for the flight path.
+
+        Returns:
+            List of Camera objects representing the transition
+        """
+        return [self.get_camera_at_frame(i) for i in range(self.num_frames)]
+
 
 def create_multiple_views(obj_file: str, output_dir: str, presets: List[str] = None,
                          width: int = 1024, height: int = 1024):
@@ -448,3 +523,69 @@ def create_multiple_views(obj_file: str, output_dir: str, presets: List[str] = N
         results[preset] = maps
 
     return results
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Map Generator & Flight Path Tool")
+    parser.add_argument('--obj', type=str, help='Input OBJ file for single map generation')
+    parser.add_argument('--preset', type=str, default='iso', help='Camera preset')
+    parser.add_argument('--out', type=str, default='maps_out', help='Output directory')
+    
+    # Flight path arguments
+    parser.add_argument('--flight-path', action='store_true', help='Generate a flight path transition')
+    parser.add_argument('--obj-planet', type=str, help='Planet OBJ file for the start of transition')
+    parser.add_argument('--obj-stargate', type=str, help='Stargate OBJ file for the end of transition')
+    parser.add_argument('--frames', type=int, default=120, help='Number of frames for transition')
+    
+    args = parser.parse_args()
+    
+    Path(args.out).mkdir(parents=True, exist_ok=True)
+    
+    if args.flight_path:
+        if not args.obj_planet or not args.obj_stargate:
+            print("Error: --obj-planet and --obj-stargate required for flight path.")
+            return
+            
+        generator = MapGenerator(1024, 1024)
+        
+        # Load geometries
+        print(f"Loading planet geometry: {args.obj_planet}")
+        planet_v, planet_e = generator.load_obj(args.obj_planet)
+        print(f"Loading stargate geometry: {args.obj_stargate}")
+        stargate_v, stargate_e = generator.load_obj(args.obj_stargate)
+        
+        # Create start camera (e.g., distant 'iso' view of planet)
+        start_camera = generator.create_camera_preset(planet_v, "iso")
+        
+        # Create end camera (e.g., 'closeup' view diving into stargate)
+        end_camera = generator.create_camera_preset(stargate_v, "closeup")
+        
+        flight_gen = FlightPathGenerator(start_camera, end_camera, args.frames)
+        
+        print(f"Rendering {args.frames} transition frames...")
+        for i in range(args.frames):
+            cam = flight_gen.get_camera_at_frame(i)
+            
+            # Blend the vertices for a morphing transition (simple linear blend)
+            # A more advanced version would just render the active object based on distance
+            t = i / float(max(1, args.frames - 1))
+            
+            # For simplicity in this demo, we'll render the stargate geometry throughout the flight
+            # but start from the planet's camera position.
+            depth_map = generator.render_depth_map(stargate_v, stargate_e, cam)
+            out_file = Path(args.out) / f"transition_{i:04d}.png"
+            depth_map.save(out_file)
+            
+            if i % 10 == 0:
+                print(f"Rendered frame {i}/{args.frames}")
+                
+        print(f"Flight path transition saved to {args.out}/")
+        
+    elif args.obj:
+        create_multiple_views(args.obj, args.out, presets=[args.preset])
+        print(f"Maps generated in {args.out}/")
+    else:
+        parser.print_help()
+
+if __name__ == '__main__':
+    main()

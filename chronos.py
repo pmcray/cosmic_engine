@@ -67,6 +67,10 @@ Examples:
                        help='Export keyframes only (one per iteration)')
     parser.add_argument('--preview', action='store_true',
                        help='Generate quick preview (limited frames, no AI)')
+    parser.add_argument('--stabilize-video', metavar='FILE',
+                       help='Stabilize an existing video file (e.g., Stargate simulation)')
+    parser.add_argument('--use-svd', action='store_true',
+                       help='Use Stable Video Diffusion for stabilization')
 
     # Preview options
     parser.add_argument('--max-frames', type=int, default=100,
@@ -275,6 +279,40 @@ def generate_preview(gen: AnimationGenerator, args):
     print(f"\nPreview saved to {output_file}")
 
 
+def generate_stabilized_video(gen: Optional[AnimationGenerator], args):
+    """Stabilize an existing video using SVD/img2img."""
+    print(f"\n=== Stabilizing Video ===")
+    print(f"Input Video: {args.stabilize_video}")
+    print(f"Style: {args.style}")
+    print(f"Resolution: {args.resolution}x{args.resolution}")
+    print(f"Use SVD: {args.use_svd}")
+
+    # Check dependencies
+    deps = check_video_dependencies()
+    if not (deps['opencv'] or deps['ffmpeg']):
+        print("\nERROR: No video encoding backend available!")
+        sys.exit(1)
+
+    # Create video factory
+    video_factory = VideoFactory(gen, resolution=args.resolution, use_diffusion=True)
+
+    # Generate video
+    output_file = args.video if args.video else str(Path(args.output) / "stabilized_output.mp4")
+
+    try:
+        video_factory.stabilize_existing_video(
+            input_video=args.stabilize_video,
+            output_file=output_file,
+            preset=args.style,
+            temporal_strength=args.temporal_strength,
+            seed=args.seed,
+            use_svd=args.use_svd,
+            verbose=args.verbose
+        )
+    except Exception as e:
+        print(f"\nERROR stabilizing video: {e}")
+
+
 def list_styles():
     """List available aesthetic styles."""
     from prompt_engine import PromptEngine
@@ -326,27 +364,36 @@ def main():
         list_styles()
         sys.exit(0)
 
-    # Validate input file (not required for system-info or list-styles)
-    if not args.file:
-        print("ERROR: --file argument is required")
+    # Validate input file (not required for system-info, list-styles, or stabilize-video)
+    if not args.file and not args.stabilize_video:
+        print("ERROR: --file or --stabilize-video argument is required")
         sys.exit(1)
 
-    if not Path(args.file).exists():
+    if args.file and not Path(args.file).exists():
         print(f"ERROR: File not found: {args.file}")
+        sys.exit(1)
+        
+    if args.stabilize_video and not Path(args.stabilize_video).exists():
+        print(f"ERROR: Video file not found: {args.stabilize_video}")
         sys.exit(1)
 
     print("=" * 50)
     print("  CHRONOS: L-System Growth Animation Engine")
     print("=" * 50)
 
-    # Load L-system
-    lsystem = load_lsystem(args.file, args.verbose)
-
-    # Create animation generator
-    gen = create_animation_generator(lsystem, args)
+    gen = None
+    if args.file:
+        # Load L-system
+        lsystem = load_lsystem(args.file, args.verbose)
+    
+        # Create animation generator
+        gen = create_animation_generator(lsystem, args)
 
     # Determine output mode
-    if args.keyframes:
+    if args.stabilize_video:
+        generate_stabilized_video(gen, args)
+
+    elif args.keyframes:
         generate_keyframes(gen, args)
 
     elif args.obj_sequence:

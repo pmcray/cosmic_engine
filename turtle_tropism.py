@@ -19,7 +19,8 @@ class TropismTurtle3D(Turtle3D):
     """3D turtle with tropism and growth graph generation."""
 
     def __init__(self, default_angle: float = 25.7, default_length: float = 1.0,
-                 default_width: float = 0.1, environment: Optional[Environment] = None):
+                 default_width: float = 0.1, environment: Optional[Environment] = None,
+                 fluid_engine = None):
         """
         Initialize tropism-enabled turtle.
 
@@ -28,16 +29,19 @@ class TropismTurtle3D(Turtle3D):
             default_length: Default step length
             default_width: Default line width
             environment: Optional environment for phototropism
+            fluid_engine: Optional fluid engine for fluid/wind tropism
         """
         super().__init__(default_angle, default_length, default_width)
 
         # Tropism calculator
-        self.tropism_calc = TropismCalculator(environment)
+        self.tropism_calc = TropismCalculator(environment, fluid_engine)
         self.environment = environment
+        self.fluid_engine = fluid_engine
 
         # Tropism parameters
         self.gravity_susceptibility = 0.0    # e_gravity
         self.photo_susceptibility = 0.0      # e_photo
+        self.fluid_susceptibility = 0.0      # e_fluid
         self.positive_gravitropism = False   # Grow toward vs away from gravity
 
         # Growth graph construction
@@ -65,7 +69,7 @@ class TropismTurtle3D(Turtle3D):
         self.growth_graph = GrowthGraph(root)
         self.current_node = root
 
-    def set_tropism(self, gravity: float = 0.0, photo: float = 0.0,
+    def set_tropism(self, gravity: float = 0.0, photo: float = 0.0, fluid: float = 0.0,
                    positive_gravity: bool = False):
         """
         Set tropism parameters.
@@ -73,16 +77,19 @@ class TropismTurtle3D(Turtle3D):
         Args:
             gravity: Gravitropism susceptibility (0.0 to 1.0)
             photo: Phototropism susceptibility (0.0 to 1.0)
+            fluid: Fluid/Wind susceptibility (0.0 to 1.0)
             positive_gravity: If True, grow toward gravity (roots)
         """
         self.gravity_susceptibility = gravity
         self.photo_susceptibility = photo
+        self.fluid_susceptibility = fluid
         self.positive_gravitropism = positive_gravity
 
     def _apply_tropism(self):
         """Apply tropism to current heading."""
         if (abs(self.gravity_susceptibility) < 1e-6 and
-            abs(self.photo_susceptibility) < 1e-6):
+            abs(self.photo_susceptibility) < 1e-6 and
+            abs(self.fluid_susceptibility) < 1e-6):
             return
 
         # Calculate new heading
@@ -91,6 +98,7 @@ class TropismTurtle3D(Turtle3D):
             position=self.state.position,
             gravity_susceptibility=self.gravity_susceptibility,
             photo_susceptibility=self.photo_susceptibility,
+            fluid_susceptibility=self.fluid_susceptibility,
             positive_gravitropism=self.positive_gravitropism
         )
 
@@ -219,7 +227,7 @@ class TropismTurtle3D(Turtle3D):
                     self.current_node.add_child(node)
 
     def interpret_with_tropism(self, symbols: List[Symbol],
-                              gravity: float = 0.0, photo: float = 0.0):
+                              gravity: float = 0.0, photo: float = 0.0, fluid: float = 0.0):
         """
         Interpret symbols with tropism enabled.
 
@@ -227,12 +235,14 @@ class TropismTurtle3D(Turtle3D):
             symbols: List of symbols to interpret
             gravity: Gravitropism susceptibility
             photo: Phototropism susceptibility
+            fluid: Fluid/Wind susceptibility
         """
-        self.set_tropism(gravity, photo)
+        self.set_tropism(gravity, photo, fluid)
         self.interpret(symbols)
 
     def interpret_and_build_graph(self, symbols: List[Symbol],
-                                  gravity: float = 0.0, photo: float = 0.0) -> GrowthGraph:
+                                  gravity: float = 0.0, photo: float = 0.0,
+                                  fluid: float = 0.0) -> GrowthGraph:
         """
         Interpret symbols and build growth graph.
 
@@ -240,12 +250,13 @@ class TropismTurtle3D(Turtle3D):
             symbols: List of symbols to interpret
             gravity: Gravitropism susceptibility
             photo: Phototropism susceptibility
+            fluid: Fluid/Wind susceptibility
 
         Returns:
             Growth graph
         """
         self.enable_graph_building()
-        self.set_tropism(gravity, photo)
+        self.set_tropism(gravity, photo, fluid)
         self.interpret(symbols)
 
         # Mark leaf nodes (nodes with no children)
@@ -264,6 +275,8 @@ class TropismTurtle3D(Turtle3D):
 def interpret_with_environment(symbols: List[Symbol], environment: Environment,
                                gravity_susceptibility: float = 0.3,
                                photo_susceptibility: float = 0.2,
+                               fluid_susceptibility: float = 0.0,
+                               fluid_engine = None,
                                default_angle: float = 25.7) -> tuple:
     """
     Convenience function to interpret symbols with environment and tropism.
@@ -273,6 +286,8 @@ def interpret_with_environment(symbols: List[Symbol], environment: Environment,
         environment: Environment for light and tropism
         gravity_susceptibility: Gravitropism strength
         photo_susceptibility: Phototropism strength
+        fluid_susceptibility: Fluid/Wind tropism strength
+        fluid_engine: Fluid solver instance
         default_angle: Default rotation angle
 
     Returns:
@@ -280,13 +295,15 @@ def interpret_with_environment(symbols: List[Symbol], environment: Environment,
     """
     turtle = TropismTurtle3D(
         default_angle=default_angle,
-        environment=environment
+        environment=environment,
+        fluid_engine=fluid_engine
     )
 
     graph = turtle.interpret_and_build_graph(
         symbols,
         gravity=gravity_susceptibility,
-        photo=photo_susceptibility
+        photo=photo_susceptibility,
+        fluid=fluid_susceptibility
     )
 
     return turtle, graph

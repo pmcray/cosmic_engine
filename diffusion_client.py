@@ -16,6 +16,7 @@ try:
         ControlNetModel,
         StableDiffusionXLControlNetPipeline,
         StableDiffusionImg2ImgPipeline,
+        StableVideoDiffusionPipeline,
         AutoencoderKL
     )
     DIFFUSERS_AVAILABLE = True
@@ -33,6 +34,7 @@ class DiffusionClient:
 
     def __init__(self, model_id: str = "stabilityai/stable-diffusion-xl-base-1.0",
                  controlnet_id: str = "diffusers/controlnet-depth-sdxl-1.0",
+                 svd_model_id: str = "stabilityai/stable-video-diffusion-img2vid-xt",
                  device: str = "auto",
                  use_fp16: bool = True):
         """
@@ -41,6 +43,7 @@ class DiffusionClient:
         Args:
             model_id: Stable Diffusion model identifier
             controlnet_id: ControlNet model identifier
+            svd_model_id: Stable Video Diffusion model identifier
             device: Device to use ('cuda', 'cpu', or 'auto')
             use_fp16: Use half precision (FP16) for faster inference
         """
@@ -58,12 +61,14 @@ class DiffusionClient:
 
         self.model_id = model_id
         self.controlnet_id = controlnet_id
+        self.svd_model_id = svd_model_id
         self.use_fp16 = use_fp16 and self.device == "cuda"
         self.dtype = torch.float16 if self.use_fp16 else torch.float32
 
         # Pipelines (loaded on demand)
         self.controlnet_pipeline = None
         self.img2img_pipeline = None
+        self.svd_pipeline = None
 
         # Prompt engine
         self.prompt_engine = PromptEngine()
@@ -71,6 +76,66 @@ class DiffusionClient:
         print(f"DiffusionClient initialized on {self.device}")
         if self.use_fp16:
             print("Using FP16 for faster inference")
+
+    def _load_svd_pipeline(self):
+        """Load Stable Video Diffusion pipeline."""
+        if self.svd_pipeline is not None:
+            return
+
+        print(f"Loading Stable Video Diffusion model from {self.svd_model_id}...")
+        self.svd_pipeline = StableVideoDiffusionPipeline.from_pretrained(
+            self.svd_model_id, torch_dtype=self.dtype, variant="fp16"
+        )
+        self.svd_pipeline.to(self.device)
+        
+        # Enable memory optimizations
+        if self.device == "cuda":
+            self.svd_pipeline.enable_model_cpu_offload()
+
+        print("SVD pipeline loaded successfully")
+
+    def generate_video_from_image(self, initial_image: Image.Image,
+                                  num_frames: int = 25,
+                                  fps: int = 7,
+                                  motion_bucket_id: int = 127,
+                                  noise_aug_strength: float = 0.02,
+                                  seed: Optional[int] = None) -> List[Image.Image]:
+        """
+        Generate a temporally coherent video sequence from an initial image using SVD.
+        
+        Args:
+            initial_image: The starting frame for the video
+            num_frames: Number of frames to generate
+            fps: Frames per second conditioning
+            motion_bucket_id: Motion strength (higher = more motion)
+            noise_aug_strength: Noise augmentation (helps temporal coherence)
+            seed: Random seed
+            
+        Returns:
+            List of generated PIL Images (frames)
+        """
+        self._load_svd_pipeline()
+        
+        # Resize image to SVD optimal resolution (1024x576)
+        # We'll use 1024x1024 for Stargate to maintain aspect ratio
+        original_size = initial_image.size
+        working_image = initial_image.resize((1024, 1024), Image.LANCZOS)
+        
+        generator = torch.manual_seed(seed) if seed is not None else None
+        
+        print(f"Generating {num_frames} coherent video frames using SVD...")
+        frames = self.svd_pipeline(
+            working_image, 
+            decode_chunk_size=8,
+            generator=generator,
+            num_frames=num_frames,
+            fps=fps,
+            motion_bucket_id=motion_bucket_id,
+            noise_aug_strength=noise_aug_strength
+        ).frames[0]
+        
+        # Resize back
+        return [frame.resize(original_size, Image.LANCZOS) for frame in frames]
 
     def _load_controlnet_pipeline(self):
         """Load ControlNet pipeline (lazy loading)."""

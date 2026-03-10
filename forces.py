@@ -12,17 +12,73 @@ from environment import Environment
 class TropismCalculator:
     """Calculates bending forces for plant growth."""
 
-    def __init__(self, environment: Optional[Environment] = None):
+    def __init__(self, environment: Optional[Environment] = None, fluid_engine=None):
         """
         Initialize tropism calculator.
 
         Args:
             environment: Optional environment for phototropism
+            fluid_engine: Optional fluid solver for fluid-based tropism (wind/currents)
         """
         self.environment = environment
+        self.fluid_engine = fluid_engine
 
         # Standard gravity vector (downward)
         self.gravity_vector = np.array([0.0, 0.0, -1.0])
+
+    def calculate_fluid_tropism(self, heading: np.ndarray, position: np.ndarray,
+                                susceptibility: float) -> np.ndarray:
+        """
+        Calculate bending due to fluid velocity (wind/current).
+
+        Args:
+            heading: Current heading vector (H)
+            position: Current position in world space
+            susceptibility: Bending strength (e)
+
+        Returns:
+            New heading vector after fluid tropism
+        """
+        if self.fluid_engine is None:
+            return heading
+
+        # Map 3D position to 2D fluid grid (assuming X-Y plane maps to fluid grid)
+        # Assuming position coordinates are roughly centered around 0, scale them
+        # to fit within the fluid grid resolution.
+        res = self.fluid_engine.RES
+        grid_x = int((position[0] * 5.0 + res / 2) % res)
+        grid_y = int((position[1] * 5.0 + res / 2) % res)
+
+        # Retrieve fluid velocity at this point
+        # The velocity field is a Taichi field, so we access it as [grid_x, grid_y]
+        vel = self.fluid_engine.velocity[grid_x, grid_y]
+
+        # Convert 2D velocity to 3D vector (assuming flow in X-Y plane)
+        fluid_vector = np.array([vel[0], vel[1], 0.0])
+
+        norm_fluid = np.linalg.norm(fluid_vector)
+        if norm_fluid < 1e-6:
+            return heading
+
+        # Normalize heading and fluid vector
+        heading = heading / np.linalg.norm(heading)
+        fluid_vector_norm = fluid_vector / norm_fluid
+
+        # The strength of the bend is proportional to both susceptibility and fluid speed
+        effective_susceptibility = susceptibility * min(norm_fluid * 0.01, 1.0)
+
+        # Apply tropism formula toward fluid flow direction
+        correction = np.cross(np.cross(heading, fluid_vector_norm), heading)
+        new_heading = heading + effective_susceptibility * correction
+
+        # Normalize result
+        norm = np.linalg.norm(new_heading)
+        if norm > 1e-6:
+            new_heading = new_heading / norm
+        else:
+            new_heading = heading
+
+        return new_heading
 
     def calculate_gravitropism(self, heading: np.ndarray, susceptibility: float,
                               positive: bool = False) -> np.ndarray:
@@ -100,15 +156,17 @@ class TropismCalculator:
     def calculate_combined_tropism(self, heading: np.ndarray, position: np.ndarray,
                                   gravity_susceptibility: float = 0.0,
                                   photo_susceptibility: float = 0.0,
+                                  fluid_susceptibility: float = 0.0,
                                   positive_gravitropism: bool = False) -> np.ndarray:
         """
-        Calculate combined gravitropic and phototropic effects.
+        Calculate combined gravitropic, phototropic, and fluid effects.
 
         Args:
             heading: Current heading vector (H)
             position: Current position in world space
             gravity_susceptibility: Gravitropism strength
             photo_susceptibility: Phototropism strength
+            fluid_susceptibility: Fluid/Wind tropism strength
             positive_gravitropism: Grow toward vs away from gravity
 
         Returns:
@@ -126,6 +184,12 @@ class TropismCalculator:
         if abs(photo_susceptibility) > 1e-6 and self.environment is not None:
             new_heading = self.calculate_phototropism(
                 new_heading, position, photo_susceptibility
+            )
+
+        # Apply fluid tropism
+        if abs(fluid_susceptibility) > 1e-6 and self.fluid_engine is not None:
+            new_heading = self.calculate_fluid_tropism(
+                new_heading, position, fluid_susceptibility
             )
 
         return new_heading

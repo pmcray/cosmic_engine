@@ -25,7 +25,8 @@ class BioSimulator:
 
     def __init__(self, axiom: List[Symbol], rules: List, context: dict,
                  bounds: Tuple[float, float, float, float, float, float] = (-50, 50, -50, 50, 0, 100),
-                 voxel_resolution: float = 1.0):
+                 voxel_resolution: float = 1.0,
+                 fluid_engine=None):
         """
         Initialize the bio-simulator.
 
@@ -35,6 +36,7 @@ class BioSimulator:
             context: L-system context
             bounds: Simulation bounds (min_x, max_x, min_y, max_y, min_z, max_z)
             voxel_resolution: Voxel size for light simulation
+            fluid_engine: Optional fluid solver for fluid tropism
         """
         # L-system components
         self.axiom = axiom
@@ -48,6 +50,7 @@ class BioSimulator:
 
         # Environment
         self.environment = Environment(bounds, voxel_resolution)
+        self.fluid_engine = fluid_engine
 
         # Metabolic model
         self.metabolic_model = MetabolicModel(self.environment)
@@ -57,6 +60,7 @@ class BioSimulator:
         self.default_length = context.get('length', 1.0)
         self.gravity_susceptibility = context.get('gravity', 0.0)
         self.photo_susceptibility = context.get('phototropism', 0.0)
+        self.fluid_susceptibility = context.get('fluid', 0.0)
         self.pipe_exponent = context.get('pipe_exponent', 2.0)
 
         # Set pipe exponent
@@ -83,6 +87,10 @@ class BioSimulator:
         Returns:
             Statistics for this step
         """
+        # Step fluid simulation if available
+        if self.fluid_engine is not None:
+            self.fluid_engine.step(self.iteration)
+
         # Rewrite L-system
         self.current_string = self.rewriter.rewrite(self.current_string, 1)
         self.iteration += 1
@@ -91,7 +99,8 @@ class BioSimulator:
         turtle = TropismTurtle3D(
             default_angle=self.default_angle,
             default_length=self.default_length,
-            environment=self.environment
+            environment=self.environment,
+            fluid_engine=self.fluid_engine
         )
 
         # Build growth graph
@@ -99,7 +108,8 @@ class BioSimulator:
             growth_graph = turtle.interpret_and_build_graph(
                 self.current_string,
                 gravity=self.gravity_susceptibility,
-                photo=self.photo_susceptibility
+                photo=self.photo_susceptibility,
+                fluid=self.fluid_susceptibility
             )
         else:
             turtle.enable_graph_building()
@@ -197,13 +207,15 @@ class BioSimulator:
         turtle = TropismTurtle3D(
             default_angle=self.default_angle,
             default_length=self.default_length,
-            environment=self.environment
+            environment=self.environment,
+            fluid_engine=self.fluid_engine
         )
 
         growth_graph = turtle.interpret_and_build_graph(
             self.current_string,
             gravity=self.gravity_susceptibility,
-            photo=self.photo_susceptibility
+            photo=self.photo_susceptibility,
+            fluid=self.fluid_susceptibility
         )
 
         return turtle, growth_graph
@@ -244,7 +256,8 @@ class BioSimulator:
 
 
 def load_biosim_from_file(filename: str, bounds: Optional[Tuple] = None,
-                          voxel_resolution: float = 1.0) -> BioSimulator:
+                          voxel_resolution: float = 1.0,
+                          fluid_engine = None) -> BioSimulator:
     """
     Load L-system and create bio-simulator.
 
@@ -252,6 +265,7 @@ def load_biosim_from_file(filename: str, bounds: Optional[Tuple] = None,
         filename: L-system file
         bounds: Optional custom bounds
         voxel_resolution: Voxel resolution
+        fluid_engine: Optional fluid solver instance
 
     Returns:
         Initialized BioSimulator
@@ -263,13 +277,15 @@ def load_biosim_from_file(filename: str, bounds: Optional[Tuple] = None,
     if bounds is None:
         bounds = (-50, 50, -50, 50, 0, 100)
 
-    simulator = BioSimulator(axiom, rules, context, bounds, voxel_resolution)
+    simulator = BioSimulator(axiom, rules, context, bounds, voxel_resolution, fluid_engine)
 
     # Update parameters from context
     if 'gravity' in context.variables:
         simulator.gravity_susceptibility = context.variables['gravity']
     if 'phototropism' in context.variables:
         simulator.photo_susceptibility = context.variables['phototropism']
+    if 'fluid' in context.variables:
+        simulator.fluid_susceptibility = context.variables['fluid']
     if 'pipe_exponent' in context.variables:
         simulator.pipe_exponent = context.variables['pipe_exponent']
         simulator.metabolic_model.set_pipe_exponent(simulator.pipe_exponent)
