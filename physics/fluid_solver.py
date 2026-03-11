@@ -67,15 +67,15 @@ class FluidEngine:
             self.has_spot = 1 if random.random() > 0.3 else 0
             self.has_pearls = 1 if random.random() > 0.3 else 0
             
-            # Slightly randomize colors for variety
-            c1_base = [0.90, 0.95, 0.95]
-            self.color_1 = ti.Vector([c1_base[0] + random.uniform(-0.05, 0.05), c1_base[1] + random.uniform(-0.05, 0.05), c1_base[2] + random.uniform(-0.05, 0.05)])
-            c2_base = [0.80, 0.20, 0.05]
-            self.color_2 = ti.Vector([c2_base[0] + random.uniform(-0.1, 0.1), c2_base[1] + random.uniform(-0.05, 0.05), c2_base[2] + random.uniform(-0.02, 0.02)])
-            c3_base = [0.15, 0.35, 0.65] # Juno Polar Blue
-            self.color_3 = ti.Vector([c3_base[0] + random.uniform(-0.05, 0.05), c3_base[1] + random.uniform(-0.1, 0.1), c3_base[2] + random.uniform(-0.1, 0.1)])
-            self.color_storm = ti.Vector([1.0, 1.0, 1.0])
-            self.color_spot = ti.Vector([0.60 + random.uniform(-0.1, 0.1), 0.05 + random.uniform(-0.05, 0.05), 0.0])
+            # Jupiter Palette Details (Zones = Light, Belts = Dark)
+            self.color_zone_1 = ti.Vector([0.90, 0.90, 0.88]) # Pearl white (Equatorial Zone)
+            self.color_zone_2 = ti.Vector([0.80, 0.75, 0.65]) # Tan/cream (Tropical Zones)
+            self.color_belt_1 = ti.Vector([0.55, 0.35, 0.20]) # Dark Brown (North Equatorial Belt)
+            self.color_belt_2 = ti.Vector([0.75, 0.40, 0.25]) # Rust/Orange (South Equatorial Belt)
+            
+            self.color_3 = ti.Vector([0.15, 0.35, 0.65]) # Deep Juno Polar Blue
+            self.color_storm = ti.Vector([1.0, 1.0, 1.0]) # White
+            self.color_spot = ti.Vector([0.70 + random.uniform(-0.1, 0.1), 0.15 + random.uniform(-0.05, 0.05), 0.05]) # Terracotta Red
 
         # Core Fields
         self.velocity = ti.Vector.field(2, dtype=float, shape=(self.RES, self.RES))
@@ -182,12 +182,15 @@ class FluidEngine:
                 freq *= 2.0
                 
             wobble = ti.sin(lon * 15.0 + time) * 0.03 * self.shear_mult
-            band_profile = ti.sin((lat + wobble) * self.band_freq * math.pi)
+            # Smooth step the sine wave to create sharper boundaries between jets
+            raw_band = ti.sin((lat + wobble) * self.band_freq * math.pi)
+            band_profile = ti.math.sign(raw_band) * (ti.abs(raw_band) ** 0.5) 
+            
             shear_mask = 1.0 - ti.abs(band_profile)
             shear_mask = shear_mask * shear_mask 
             
             micro_turbulence = turb * 180.0 * self.shear_mult
-            wind_speed = (band_profile * 140.0 * self.wind_mult) + (micro_turbulence * shear_mask)
+            wind_speed = (band_profile * 160.0 * self.wind_mult) + (micro_turbulence * shear_mask)
             self.velocity[i, j][0] = wind_speed
             
             # 2. Dynamic Cyclogenesis (The Great Red/Dark Spot)
@@ -196,30 +199,48 @@ class FluidEngine:
                 spot_y = self.RES * 0.35
                 dx = float(i) - spot_x
                 dy = float(j) - spot_y
-                dist = ti.sqrt(dx**2 + dy**2)
-                spot_radius = self.RES * 0.08
+                
+                # Make the spot correctly elliptical (wider than it is tall)
+                dist_elliptical = ti.sqrt((dx * 0.7)**2 + (dy * 1.5)**2)
+                spot_radius = self.RES * 0.07
                 
                 spot_distortion = turb * 0.015 * self.RES * self.shear_mult
                 
-                if dist < spot_radius + spot_distortion:
-                    tangent_v = (dist / spot_radius) * 250.0 * self.wind_mult
-                    self.velocity[i, j][0] += -dy / (dist + 1e-5) * tangent_v
-                    self.velocity[i, j][1] += dx / (dist + 1e-5) * tangent_v
+                if dist_elliptical < spot_radius + spot_distortion:
+                    # Flow around the storm (hollow vortex)
+                    tangent_v = (dist_elliptical / spot_radius) * 350.0 * self.wind_mult
+                    self.velocity[i, j][0] += -dy / (dist_elliptical + 1e-5) * tangent_v
+                    self.velocity[i, j][1] += dx / (dist_elliptical + 1e-5) * tangent_v
 
-                    if ti.random() > 0.6: # Significantly slows the red dye flood
+                    # Pale halo around the terracotta core
+                    if dist_elliptical > spot_radius * 0.75:
+                        if ti.random() > 0.8:
+                            self.dye[i, j] = self.color_zone_1 * 1.1 
+                    elif ti.random() > 0.6: 
                         self.dye[i, j] = self.color_spot
             
-            # 3. Coloring and Polar Caps
+            # 3. Strict Zonal Coloring and Polar Caps
             polar_mask = ti.abs(lat - 0.5) * 2.0 
             
-            if ti.random() > 0.94: # Faster global repaint to contain the storms
-                if wind_speed > 80.0 * self.wind_mult:
-                    self.dye[i, j] = self.color_1 
-                elif wind_speed < -80.0 * self.wind_mult:
-                    self.dye[i, j] = self.color_2 
+            if ti.random() > 0.92: # Continual repainting of the zonal bands
+                if polar_mask > 0.65:
+                    self.dye[i, j] = self.color_3
                 else:
-                    base_c = self.color_3 if polar_mask > 0.65 else self.color_1 * 0.8
-                    self.dye[i, j] = base_c
+                    # Hardcoded latitudinal bounds for iconic Belts and Zones
+                    if 0.45 < lat < 0.55: # Equatorial Zone
+                        self.dye[i, j] = self.color_zone_1
+                    elif 0.55 <= lat < 0.62: # North Equatorial Belt (Dark Brown)
+                        self.dye[i, j] = self.color_belt_1
+                    elif 0.38 < lat <= 0.45: # South Equatorial Belt (Rust/Orange)
+                        self.dye[i, j] = self.color_belt_2
+                    elif wind_speed > 60.0 * self.wind_mult: # Fast Prograde Zones
+                        self.dye[i, j] = self.color_zone_2
+                    elif wind_speed < -60.0 * self.wind_mult: # Fast Retrograde Belts
+                        self.dye[i, j] = self.color_belt_1 * 0.9 # Darker
+                    else:
+                        # Fallback mixture
+                        mix_factor = (ti.sin(lat * 30.0) + 1.0) * 0.5
+                        self.dye[i, j] = self.color_zone_2 * mix_factor + self.color_belt_2 * (1.0 - mix_factor)
                     
             # 4. Explosive Storm Pop-ups
             storm_trigger = ti.sin(lon * 40.0 + time * 2.0) * ti.cos(lat * 30.0) + turb * 0.2
@@ -251,7 +272,7 @@ class FluidEngine:
                 if barge_dist < 0.03:
                     barge_trigger = ti.sin(lon * 25.0 + time * 0.8) + turb * 0.5
                     if barge_trigger > 1.2:
-                        self.dye[i, j] = self.color_2 * 0.5 # Very dark brown
+                        self.dye[i, j] = self.color_belt_1 * 0.5 # Very dark brown
                         # Strong cyclonic rotation
                         dx_b = lon * 25.0 % (2.0 * math.pi) - math.pi
                         dy_b = (lat - barge_lat) * 25.0

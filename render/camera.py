@@ -60,20 +60,40 @@ class SphereCamera:
         h_right = self.get_cloud_height(field, tex_u + eps, tex_v)
         h_up = self.get_cloud_height(field, tex_u, tex_v + eps)
         
-        # Gradient in texture space
-        du = (h_right - h_center) * 50.0 # Extreme 3D relief for Juno style
-        dv = (h_up - h_center) * 50.0
+        # Gradient in texture space (Reduced from 50.0 to 12.0 for softer, more realistic clouds)
+        du = (h_right - h_center) * 12.0 
+        dv = (h_up - h_center) * 12.0
         
         # Perturb normal
         new_n = n - (tangent * du) - (bitangent * dv)
         new_n /= ti.sqrt(new_n[0]**2 + new_n[1]**2 + new_n[2]**2)
         
         # Mix the perturbed normal with the original to control the strength
-        bump_strength = 0.95 # Higher bump strength for deeper terminator shadows
+        bump_strength = 0.85 # Softened bump strength
         final_n = n * (1.0 - bump_strength) + new_n * bump_strength
         final_n /= ti.sqrt(final_n[0]**2 + final_n[1]**2 + final_n[2]**2)
         
         return final_n
+
+    @ti.func
+    def fbm_noise(self, p):
+        value = 0.0
+        amp = 0.5
+        freq = 1.0
+        # 4 octaves of pseudo-random noise
+        for _ in range(4):
+            # Simple hash-based noise approximation for GPU
+            qx = p[0] * freq
+            qy = p[1] * freq
+            qz = p[2] * freq
+            n = ti.sin(qx*12.9898 + qy*78.233 + qz*37.719) * 43758.5453
+            n = n - ti.floor(n) # fractional part
+            
+            value += n * amp
+            amp *= 0.5
+            freq *= 2.0
+            
+        return value
 
     @ti.func
     def rot_x(self, v, angle):
@@ -180,6 +200,20 @@ class SphereCamera:
                 n = self.perturbed_normal(render_buffer, tex_u, tex_v, n)
                 
                 fluid_color = self.bilinear_interp(render_buffer, ti.Vector([tex_u * self.fluid_res, tex_v * self.fluid_res]))
+                
+                # Sub-grid Procedural Detail (fBM)
+                # We distort the noise coordinates using the underlying fluid color to make the noise follow the flow
+                flow_distortion = ti.Vector([fluid_color[0] - 0.5, fluid_color[1] - 0.5, fluid_color[2] - 0.5]) * 4.0
+                noise_val = self.fbm_noise(p * 18.0 + flow_distortion)
+                
+                # Blend the fractal wispiness into the base color
+                # White clouds get whiter/crisper, dark bands get deeper
+                wisp_factor = (noise_val * 2.0 - 1.0) * 0.15 
+                fluid_color = ti.Vector([
+                    ti.max(0.0, ti.min(1.0, fluid_color[0] + wisp_factor)),
+                    ti.max(0.0, ti.min(1.0, fluid_color[1] + wisp_factor)),
+                    ti.max(0.0, ti.min(1.0, fluid_color[2] + wisp_factor))
+                ])
                 
                 # Soft Translucent Shadows casting ON the planet
                 shadow = 1.0
