@@ -12,9 +12,13 @@ Rotation symbols (from ABOP Chapter 1, Section 1.3):
 - /, \: Rotation around H axis (roll)
 - [ : Push state onto stack
 - ] : Pop state from stack
+- { : Start a polygon
+- . : Record a vertex for the current polygon
+- } : End a polygon
 - F(length): Move forward and draw
 - f(length): Move forward without drawing
 - ! (width): Set line width
+- ~ (surface): Draw a predefined surface (TBD)
 """
 import numpy as np
 from typing import List, Tuple, Optional
@@ -87,6 +91,8 @@ class Turtle3D:
         self.vertices = []
         self.edges = []
         self.segments = []  # List of Segment objects
+        self.polygons = []  # List of lists of vertex indices
+        self.current_polygon = None  # None or list of vertex indices
         self.current_vertex_index = 0
 
     def reset(self):
@@ -102,6 +108,8 @@ class Turtle3D:
         self.vertices = []
         self.edges = []
         self.segments = []
+        self.polygons = []
+        self.current_polygon = None
         self.current_vertex_index = 0
 
     def push(self):
@@ -201,6 +209,24 @@ class Turtle3D:
             if params:
                 self.state.width = params[0]
 
+        elif char == '{':
+            # Start polygon
+            self.current_polygon = []
+
+        elif char == '.':
+            # Record vertex for polygon
+            if self.current_polygon is not None:
+                self.vertices.append(self.state.position.copy())
+                self.current_polygon.append(self.current_vertex_index)
+                self.current_vertex_index += 1
+
+        elif char == '}':
+            # End polygon
+            if self.current_polygon is not None:
+                if len(self.current_polygon) >= 3:
+                    self.polygons.append(self.current_polygon)
+                self.current_polygon = None
+
     def _draw_forward(self, length: float):
         """Move forward and draw a line."""
         start_pos = self.state.position.copy()
@@ -293,10 +319,14 @@ class Turtle3D:
         """Get all edges as a list of (start_idx, end_idx, width) tuples."""
         return self.edges
 
+    def get_polygons(self) -> List[List[int]]:
+        """Get all polygons as a list of lists of vertex indices."""
+        return self.polygons
+
     def to_obj(self, filename: str):
         """Export geometry to OBJ file."""
         from obj_exporter import export_to_obj
-        export_to_obj(filename, self.vertices, self.edges)
+        export_to_obj(filename, self.vertices, self.edges, self.polygons)
 
     def get_statistics(self) -> dict:
         """Get statistics about the generated geometry."""
@@ -324,6 +354,7 @@ class Turtle3D:
         return {
             'num_vertices': len(vertices),
             'num_edges': len(self.edges),
+            'num_polygons': len(self.polygons),
             'total_length': total_length,
             'bounds': {
                 'min': min_bounds,

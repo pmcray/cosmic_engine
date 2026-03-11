@@ -5,20 +5,25 @@ import numpy as np
 from typing import List, Tuple
 
 
-def export_to_obj(filename: str, vertices: List[np.ndarray], edges: List[Tuple[int, int, float]]):
+def export_to_obj(filename: str, vertices: List[np.ndarray], edges: List[Tuple[int, int, float]], faces: List[List[int]] = None):
     """
-    Export vertices and edges to OBJ file format.
+    Export vertices, edges, and faces to OBJ file format.
 
     Args:
         filename: Output filename
         vertices: List of vertex positions
         edges: List of (start_idx, end_idx, width) tuples
+        faces: Optional list of faces (lists of vertex indices)
     """
+    if faces is None:
+        faces = []
+        
     with open(filename, 'w') as f:
         # Write header
         f.write("# L-System Core OBJ Export\n")
         f.write(f"# Vertices: {len(vertices)}\n")
-        f.write(f"# Edges: {len(edges)}\n\n")
+        f.write(f"# Edges: {len(edges)}\n")
+        f.write(f"# Faces: {len(faces)}\n\n")
 
         # Write vertices
         for vertex in vertices:
@@ -31,16 +36,26 @@ def export_to_obj(filename: str, vertices: List[np.ndarray], edges: List[Tuple[i
             # OBJ indices are 1-based
             f.write(f"l {start_idx + 1} {end_idx + 1}\n")
 
+        # Write faces
+        for face in faces:
+            # OBJ indices are 1-based
+            face_str = " ".join(str(idx + 1) for idx in face)
+            f.write(f"f {face_str}\n")
 
-def export_to_ply(filename: str, vertices: List[np.ndarray], edges: List[Tuple[int, int, float]]):
+
+def export_to_ply(filename: str, vertices: List[np.ndarray], edges: List[Tuple[int, int, float]], faces: List[List[int]] = None):
     """
-    Export vertices and edges to PLY file format.
+    Export vertices, edges, and faces to PLY file format.
 
     Args:
         filename: Output filename
         vertices: List of vertex positions
         edges: List of (start_idx, end_idx, width) tuples
+        faces: Optional list of faces (lists of vertex indices)
     """
+    if faces is None:
+        faces = []
+        
     with open(filename, 'w') as f:
         # Write header
         f.write("ply\n")
@@ -53,6 +68,9 @@ def export_to_ply(filename: str, vertices: List[np.ndarray], edges: List[Tuple[i
         f.write("property int vertex1\n")
         f.write("property int vertex2\n")
         f.write("property float width\n")
+        if faces:
+            f.write(f"element face {len(faces)}\n")
+            f.write("property list uchar int vertex_indices\n")
         f.write("end_header\n")
 
         # Write vertices
@@ -63,26 +81,40 @@ def export_to_ply(filename: str, vertices: List[np.ndarray], edges: List[Tuple[i
         for start_idx, end_idx, width in edges:
             f.write(f"{start_idx} {end_idx} {width:.6f}\n")
 
+        # Write faces
+        for face in faces:
+            f.write(f"{len(face)} " + " ".join(str(idx) for idx in face) + "\n")
+
 
 def export_cylinders_to_obj(filename: str, vertices: List[np.ndarray],
                             edges: List[Tuple[int, int, float]],
-                            segments: int = 8):
+                            segments: int = 8,
+                            faces: List[List[int]] = None):
     """
-    Export edges as cylindrical meshes to OBJ file.
+    Export edges as cylindrical meshes and original faces to OBJ file.
 
     Args:
         filename: Output filename
         vertices: List of vertex positions
         edges: List of (start_idx, end_idx, width) tuples
         segments: Number of segments around cylinder circumference
+        faces: Optional list of faces (lists of vertex indices)
     """
+    if faces is None:
+        faces = []
+        
     with open(filename, 'w') as f:
         # Write header
         f.write("# L-System Core OBJ Export (Cylinders)\n")
         f.write(f"# Original Vertices: {len(vertices)}\n")
-        f.write(f"# Edges: {len(edges)}\n\n")
+        f.write(f"# Edges: {len(edges)}\n")
+        f.write(f"# Original Faces: {len(faces)}\n\n")
 
-        vertex_offset = 0
+        # Write original vertices for the faces
+        for v in vertices:
+            f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+            
+        vertex_offset = len(vertices)
 
         for start_idx, end_idx, width in edges:
             start_pos = vertices[start_idx]
@@ -102,6 +134,12 @@ def export_cylinders_to_obj(filename: str, vertices: List[np.ndarray],
                 f.write(f"f {face[0] + vertex_offset + 1} {face[1] + vertex_offset + 1} {face[2] + vertex_offset + 1}\n")
 
             vertex_offset += len(cylinder_vertices)
+
+        # Write original polygon faces
+        for face in faces:
+            # OBJ indices are 1-based, these use the original vertices at the start of the file
+            face_str = " ".join(str(idx + 1) for idx in face)
+            f.write(f"f {face_str}\n")
 
 
 def create_cylinder(start: np.ndarray, end: np.ndarray, radius: float, segments: int) -> Tuple[List[np.ndarray], List[Tuple[int, int, int]]]:

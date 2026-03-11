@@ -164,7 +164,7 @@ class TropismTurtle3D(Turtle3D):
         params = symbol.params if symbol.params else []
 
         # Standard turtle commands (from parent)
-        if char in ['F', 'f', '+', '-', '&', '^', '/', '\\', '!']:
+        if char in ['F', 'f', '+', '-', '&', '^', '/', '\\', '!', '{', '.', '}']:
             super()._process_symbol(symbol)
 
         # Stack operations with graph support
