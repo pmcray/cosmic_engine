@@ -43,3 +43,4 @@ datasets/
 outputs/
 renders/
 frames/
+*.obj
