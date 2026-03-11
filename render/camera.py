@@ -2,6 +2,9 @@ import taichi as ti
 import math
 import numpy as np
 
+# Import the new Geodesic Engine components for Pi-Metric rendering and ZPHC
+from render.geodesic_engine import GeodesicEngine
+
 @ti.data_oriented
 class SphereCamera:
     def __init__(self, fluid_res=512, render_res=1024, has_rings=0, samples=4):
@@ -9,6 +12,9 @@ class SphereCamera:
         self.render_res = render_res
         self.has_rings = has_rings
         self.samples = samples # Controls Anti-Aliasing quality
+        
+        # Instantiate the Geodesic Engine for ZPHC (Zero-Point Harmonic Collapse)
+        self.geo_engine = GeodesicEngine(render_res=render_res, samples=samples)
         
         # Camera transform parameters
         self.cam_tilt = -0.45
@@ -139,7 +145,7 @@ class SphereCamera:
         return alpha, color
 
     @ti.func
-    def cast_ray(self, u, v, light_dir, render_buffer: ti.template()):
+    def cast_ray(self, u, v, light_dir, render_buffer: ti.template(), time: float):
         ro = ti.Vector([0.0, 0.0, -4.0])
         rd = ti.Vector([u, v, 1.5]) 
         rd /= ti.sqrt(rd[0]**2 + rd[1]**2 + rd[2]**2)
@@ -180,6 +186,7 @@ class SphereCamera:
                     hit_ring = True
 
         color = ti.Vector([0.0, 0.0, 0.0])
+        attention = self.geo_engine.observer_attention[None]
         
         # 3. Compositing, Translucency, and Scattering
         if hit_sphere or hit_ring:
@@ -187,109 +194,141 @@ class SphereCamera:
             ring_color = ti.Vector([0.0, 0.0, 0.0])
             ring_alpha = 0.0
             
-            if hit_sphere:
-                p = ro + rd * t_sphere
-                n = p / ti.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
-                
-                phi = ti.math.atan2(n[2], n[0])
-                theta = ti.math.asin(n[1])
-                tex_u = (phi / (2.0 * math.pi)) + 0.5
-                tex_v = (theta / math.pi) + 0.5
-                
-                # 3D Cloud Relief (Perturb Normal)
-                n = self.perturbed_normal(render_buffer, tex_u, tex_v, n)
-                
-                fluid_color = self.bilinear_interp(render_buffer, ti.Vector([tex_u * self.fluid_res, tex_v * self.fluid_res]))
-                
-                # Sub-grid Procedural Detail (fBM)
-                # We distort the noise coordinates using the underlying fluid color to make the noise follow the flow
-                flow_distortion = ti.Vector([fluid_color[0] - 0.5, fluid_color[1] - 0.5, fluid_color[2] - 0.5]) * 4.0
-                noise_val = self.fbm_noise(p * 18.0 + flow_distortion)
-                
-                # Blend the fractal wispiness into the base color
-                # White clouds get whiter/crisper, dark bands get deeper
-                wisp_factor = (noise_val * 2.0 - 1.0) * 0.15 
-                fluid_color = ti.Vector([
-                    ti.max(0.0, ti.min(1.0, fluid_color[0] + wisp_factor)),
-                    ti.max(0.0, ti.min(1.0, fluid_color[1] + wisp_factor)),
-                    ti.max(0.0, ti.min(1.0, fluid_color[2] + wisp_factor))
-                ])
-                
-                # Soft Translucent Shadows casting ON the planet
-                shadow = 1.0
-                if self.has_rings == 1 and ti.abs(light_dir[1]) > 1e-5:
-                    t_shad = -p[1] / light_dir[1]
-                    if t_shad > 0.0:
-                        p_shad = p + light_dir * t_shad
-                        d_shad = ti.sqrt(p_shad[0]**2 + p_shad[2]**2)
-                        if 1.2 < d_shad < 2.4:
-                            r_alpha, _ = self.sample_ring(d_shad)
-                            shadow = 1.0 - (r_alpha * 0.85) # Allows partial light through
+            # --- ZERO-POINT HARMONIC COLLAPSE (ZPHC) OCCLUSION ---
+            # If the Operator agent is not actively interrogating this region (attention < 0.1),
+            # we do not waste compute on full atmospheric scattering, multi-octave fBM, or bump mapping.
+            # Instead, we render the underlying probabilistic Pi-Lattice skeleton representing uncollapsed superposition.
+            if attention < 0.1:
+                if hit_sphere:
+                    p = ro + rd * t_sphere
+                    lattice_val = self.geo_engine.get_pi_lattice_noise(p * 20.0 + time)
+                    w_color = ti.Vector([0.1, 0.8, 0.3]) * ti.abs(lattice_val)
+                    sphere_color = w_color * 0.5 # Darker edge
+                    color = sphere_color
+                elif hit_ring:
+                    p_ring = ro + rd * t_ring
+                    lattice_val = self.geo_engine.get_pi_lattice_noise(p_ring * 10.0 + time)
+                    w_color = ti.Vector([0.1, 0.8, 0.3]) * ti.abs(lattice_val)
+                    ring_color = w_color * 0.2
+                    color = ring_color
+            else:
+                # --- FULL GEOMETRIC NOUN-PHASE RENDERING (OBSERVED) ---
+                if hit_sphere:
+                    p = ro + rd * t_sphere
+                    n = p / ti.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
+                    
+                    phi = ti.math.atan2(n[2], n[0])
+                    theta = ti.math.asin(n[1])
+                    tex_u = (phi / (2.0 * math.pi)) + 0.5
+                    tex_v = (theta / math.pi) + 0.5
+                    
+                    # 3D Cloud Relief (Perturb Normal)
+                    n = self.perturbed_normal(render_buffer, tex_u, tex_v, n)
+                    
+                    fluid_color = self.bilinear_interp(render_buffer, ti.Vector([tex_u * self.fluid_res, tex_v * self.fluid_res]))
+                    
+                    # Sub-grid Procedural Detail (fBM)
+                    # We distort the noise coordinates using the underlying fluid color to make the noise follow the flow
+                    flow_distortion = ti.Vector([fluid_color[0] - 0.5, fluid_color[1] - 0.5, fluid_color[2] - 0.5]) * 4.0
+                    noise_val = self.fbm_noise(p * 18.0 + flow_distortion)
+                    
+                    # Blend the fractal wispiness into the base color
+                    # White clouds get whiter/crisper, dark bands get deeper
+                    wisp_factor = (noise_val * 2.0 - 1.0) * 0.15 
+                    fluid_color = ti.Vector([
+                        ti.max(0.0, ti.min(1.0, fluid_color[0] + wisp_factor)),
+                        ti.max(0.0, ti.min(1.0, fluid_color[1] + wisp_factor)),
+                        ti.max(0.0, ti.min(1.0, fluid_color[2] + wisp_factor))
+                    ])
+                    
+                    # Soft Translucent Shadows casting ON the planet
+                    shadow = 1.0
+                    if self.has_rings == 1 and ti.abs(light_dir[1]) > 1e-5:
+                        t_shad = -p[1] / light_dir[1]
+                        if t_shad > 0.0:
+                            p_shad = p + light_dir * t_shad
+                            d_shad = ti.sqrt(p_shad[0]**2 + p_shad[2]**2)
+                            if 1.2 < d_shad < 2.4:
+                                r_alpha, _ = self.sample_ring(d_shad)
+                                shadow = 1.0 - (r_alpha * 0.85) # Allows partial light through
+                                
+                    # Enhanced Self-Shadowing for clouds
+                    # The normal is perturbed, creating stark shadows near the terminator
+                    diffuse = ti.max(0.0, n[0]*light_dir[0] + n[1]*light_dir[1] + n[2]*light_dir[2]) * shadow
+                    
+                    # Rim lighting and volumetric aerosol scattering
+                    view_dir = ti.Vector([-rd[0], -rd[1], -rd[2]])
+                    ndotv = ti.max(0.0, n[0]*view_dir[0] + n[1]*view_dir[1] + n[2]*view_dir[2])
+                    rim = (1.0 - ndotv)**3.0 * 0.6
+                    
+                    # Rayleigh Atmospheric Halo (Limb Glow)
+                    # Adds a glowing rim even in shadow at extreme angles
+                    limb_glow = (1.0 - ndotv)**5.0 * 0.5
+                    limb_color = ti.Vector([0.3, 0.5, 0.9]) * limb_glow
+                    
+                    rim_color = ti.Vector([1.0, 0.9, 0.8]) * rim * diffuse
+                    
+                    # Volumetric aerosol scattering
+                    half_vec = light_dir + view_dir
+                    half_length = ti.sqrt(half_vec[0]**2 + half_vec[1]**2 + half_vec[2]**2) + 1e-5
+                    half_vec /= half_length
+                    ndoth = ti.max(0.0, n[0]*half_vec[0] + n[1]*half_vec[1] + n[2]*half_vec[2])
+                    aerosol_scatter = (1.0 - ndotv) * (ndoth**8.0) * 0.8
+                    aerosol_color = ti.Vector([0.95, 0.85, 0.75]) * aerosol_scatter * shadow
+    
+                    sphere_color = fluid_color * diffuse + rim_color + aerosol_color + limb_color
+                    
+                if hit_ring:
+                    p_ring = ro + rd * t_ring
+                    dist = ti.sqrt(p_ring[0]**2 + p_ring[2]**2)
+                    ring_alpha, base_r_color = self.sample_ring(dist)
+                    
+                    # Planet Shadow casting ON the rings
+                    b_shad = p_ring[0]*light_dir[0] + p_ring[1]*light_dir[1] + p_ring[2]*light_dir[2]
+                    c_shad = (p_ring[0]**2 + p_ring[1]**2 + p_ring[2]**2) - 1.0
+                    h_shad = b_shad**2 - c_shad
+                    
+                    planet_shadow = 1.0
+                    if h_shad > 0.0:
+                        t1 = -b_shad - ti.sqrt(h_shad)
+                        if t1 > 0.0:
+                            planet_shadow = 0.05 # Deep umbra
                             
-                # Enhanced Self-Shadowing for clouds
-                # The normal is perturbed, creating stark shadows near the terminator
-                diffuse = ti.max(0.0, n[0]*light_dir[0] + n[1]*light_dir[1] + n[2]*light_dir[2]) * shadow
-                
-                # Rim lighting and volumetric aerosol scattering
-                view_dir = ti.Vector([-rd[0], -rd[1], -rd[2]])
-                ndotv = ti.max(0.0, n[0]*view_dir[0] + n[1]*view_dir[1] + n[2]*view_dir[2])
-                rim = (1.0 - ndotv)**3.0 * 0.6
-                
-                # Rayleigh Atmospheric Halo (Limb Glow)
-                # Adds a glowing rim even in shadow at extreme angles
-                limb_glow = (1.0 - ndotv)**5.0 * 0.5
-                limb_color = ti.Vector([0.3, 0.5, 0.9]) * limb_glow
-                
-                rim_color = ti.Vector([1.0, 0.9, 0.8]) * rim * diffuse
-                
-                # Volumetric aerosol scattering
-                half_vec = light_dir + view_dir
-                half_length = ti.sqrt(half_vec[0]**2 + half_vec[1]**2 + half_vec[2]**2) + 1e-5
-                half_vec /= half_length
-                ndoth = ti.max(0.0, n[0]*half_vec[0] + n[1]*half_vec[1] + n[2]*half_vec[2])
-                aerosol_scatter = (1.0 - ndotv) * (ndoth**8.0) * 0.8
-                aerosol_color = ti.Vector([0.95, 0.85, 0.75]) * aerosol_scatter * shadow
-
-                sphere_color = fluid_color * diffuse + rim_color + aerosol_color + limb_color
-                
-            if hit_ring:
-                p_ring = ro + rd * t_ring
-                dist = ti.sqrt(p_ring[0]**2 + p_ring[2]**2)
-                ring_alpha, base_r_color = self.sample_ring(dist)
-                
-                # Planet Shadow casting ON the rings
-                b_shad = p_ring[0]*light_dir[0] + p_ring[1]*light_dir[1] + p_ring[2]*light_dir[2]
-                c_shad = (p_ring[0]**2 + p_ring[1]**2 + p_ring[2]**2) - 1.0
-                h_shad = b_shad**2 - c_shad
-                
-                planet_shadow = 1.0
-                if h_shad > 0.0:
-                    t1 = -b_shad - ti.sqrt(h_shad)
-                    if t1 > 0.0:
-                        planet_shadow = 0.05 # Deep umbra
-                        
-                # Mie Scattering Approximation for icy dust
-                scatter = ti.max(0.0, rd[0]*light_dir[0] + rd[1]*light_dir[1] + rd[2]*light_dir[2])
-                mie = 1.0 + (scatter**4) * 2.0
-                
-                light_intensity = ti.max(0.15, ti.abs(light_dir[1])) * mie
-                ring_color = base_r_color * light_intensity * planet_shadow
-
-            # Z-Buffer Depth Blending
-            if hit_ring and hit_sphere:
-                if t_ring < t_sphere:
-                    color = ring_color * ring_alpha + sphere_color * (1.0 - ring_alpha) 
-                else:
-                    color = sphere_color 
-            elif hit_ring:
-                color = ring_color * ring_alpha
-            elif hit_sphere:
-                color = sphere_color
-                
+                    # Mie Scattering Approximation for icy dust
+                    scatter = ti.max(0.0, rd[0]*light_dir[0] + rd[1]*light_dir[1] + rd[2]*light_dir[2])
+                    mie = 1.0 + (scatter**4) * 2.0
+                    
+                    light_intensity = ti.max(0.15, ti.abs(light_dir[1])) * mie
+                    ring_color = base_r_color * light_intensity * planet_shadow
+    
+                # Z-Buffer Depth Blending
+                if hit_ring and hit_sphere:
+                    if t_ring < t_sphere:
+                        color = ring_color * ring_alpha + sphere_color * (1.0 - ring_alpha) 
+                    else:
+                        color = sphere_color 
+                elif hit_ring:
+                    color = ring_color * ring_alpha
+                elif hit_sphere:
+                    color = sphere_color
+                    
+                # If transitioning between ZPHC visibility states, blend between the skeleton and reality
+                if attention < 1.0:
+                     if hit_sphere:
+                         p = ro + rd * t_sphere
+                         lattice_val = self.geo_engine.get_pi_lattice_noise(p * 20.0 + time)
+                         w_color = ti.Vector([0.1, 0.8, 0.3]) * ti.abs(lattice_val)
+                         color = w_color * (1.0 - attention) + color * attention
+                     elif hit_ring:
+                         p_ring = ro + rd * t_ring
+                         lattice_val = self.geo_engine.get_pi_lattice_noise(p_ring * 10.0 + time)
+                         w_color = ti.Vector([0.1, 0.8, 0.3]) * ti.abs(lattice_val)
+                         color = w_color * (1.0 - attention) + color * attention
+                     
         return color
 
     @ti.kernel
-    def render_gas_giant(self, render_buffer: ti.template(), lx: float, ly: float, lz: float):
+    def render_gas_giant(self, render_buffer: ti.template(), lx: float, ly: float, lz: float, time: float):
         light_dir = ti.Vector([lx, ly, lz])
         light_dir /= ti.sqrt(light_dir[0]**2 + light_dir[1]**2 + light_dir[2]**2)
         
@@ -303,7 +342,7 @@ class SphereCamera:
                 u = (float(i) + offset_x) / self.render_res * 2.0 - 1.0
                 v = (float(j) + offset_y) / self.render_res * 2.0 - 1.0
                 
-                accumulated_color += self.cast_ray(u, v, light_dir, render_buffer)
+                accumulated_color += self.cast_ray(u, v, light_dir, render_buffer, time)
                 
             final_color = accumulated_color / float(self.samples)
             
