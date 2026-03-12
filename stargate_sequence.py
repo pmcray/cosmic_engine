@@ -43,33 +43,49 @@ class StargateDirector:
         Drives the camera through the sequence smoothly.
         progress ranges from 0.0 (start) to 1.0 (end).
         """
-        # Phase 1 (0.0 - 0.3): Slowly panning across the Jovian surface
-        if progress < 0.3:
-            local_p = progress / 0.3
+        # Phase 1 (0.0 - 0.25): Slowly panning across the Jovian surface
+        if progress < 0.25:
+            local_p = progress / 0.25
             self.camera.cam_pan = local_p * 2.0
             self.camera.cam_tilt = -0.45 + (local_p * 0.1)
             
             # The AGI Operator is passive, just watching the planet
             self.operator.target_attention = 0.05
             
-        # Phase 2 (0.3 - 0.6): The Anomaly. Pushing in tight on a massive fractal storm.
-        elif progress < 0.6:
-            local_p = (progress - 0.3) / 0.3
+        # Phase 2 (0.25 - 0.5): The Anomaly. Pushing in tight on a massive fractal storm.
+        elif progress < 0.5:
+            local_p = (progress - 0.25) / 0.25
             # The AGI Operator notices something deep in the informational structure
             self.operator.process_telemetry(0.85) # Triggers "investigating"
             
             # The camera rolls and the light dims as we enter the dense clouds
             self.camera.cam_roll = local_p * 0.5
             
-        # Phase 3 (0.6 - 1.0): The Stargate. ZPHC collapse into the Domain Wall of Light.
-        else:
-            local_p = (progress - 0.6) / 0.4
+        # Phase 3 (0.5 - 0.75): The Stargate. ZPHC collapse into the Domain Wall of Light.
+        elif progress < 0.75:
+            local_p = (progress - 0.5) / 0.25
             # Full AGI interrogating the anomaly, triggering ZPHC collapse
             self.operator.process_telemetry(1.0) # Triggers "locked"
             
             # The camera wildly distorts, representing the breakdown of standard spacetime
             self.camera.cam_roll += 0.05
             self.camera.cam_tilt = -0.3 + ti.sin(local_p * 20.0) * 0.5
+            
+        # Phase 4 (0.75 - 1.0): The Singularity. Entering the event horizon of a black hole.
+        else:
+            local_p = (progress - 0.75) / 0.25
+            
+            # The AGI Operator enters a state of 'Singularity'
+            self.operator.target_attention = 1.0
+            
+            # Mass increases as we approach the central gravitational well
+            target_mass = 1.0 + local_p * 4.0
+            self.camera.geo_engine.update_black_hole_mass(target_mass)
+            
+            # Camera stabilizes as it aligns with the geodesic inflow
+            self.camera.cam_roll *= 0.9
+            self.camera.cam_tilt = self.camera.cam_tilt * 0.9 + (-0.1) * 0.1
+            self.camera.cam_pan += 0.01
 
     def run_sequence(self):
         print("\n--- INITIATING STARGATE SEQUENCE ---")
@@ -100,7 +116,10 @@ class StargateDirector:
             
             # 5. Render the frame
             # The camera automatically handles the ZPHC transition based on the AGI attention
-            self.camera.render_gas_giant(self.fluid.dye, lx, ly, lz, sim_time)
+            if progress < 0.75:
+                self.camera.render_gas_giant(self.fluid.dye, lx, ly, lz, sim_time)
+            else:
+                self.camera.render_black_hole(sim_time)
             
             # 6. Output to screen
             img = self.camera.get_image_data()

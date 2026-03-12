@@ -1,5 +1,6 @@
 import taichi as ti
 import math
+from physics.black_hole import BlackHole
 
 @ti.data_oriented
 class GeodesicEngine:
@@ -16,6 +17,15 @@ class GeodesicEngine:
         # ZPHC Observer state (0.0 = unobserved proxy, 1.0 = fully collapsed reality)
         self.observer_attention = ti.field(dtype=float, shape=())
         self.observer_attention[None] = 0.0
+        
+        # Black Hole state
+        self.bh_mass = ti.field(dtype=float, shape=())
+        self.bh_mass[None] = 1.0
+        self.black_hole = BlackHole() # Used for its @ti.func methods
+
+    @ti.kernel
+    def update_black_hole_mass(self, mass: float):
+        self.bh_mass[None] = mass
 
     @ti.kernel
     def update_observer_attention(self, attention_level: float):

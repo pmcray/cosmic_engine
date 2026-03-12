@@ -359,5 +359,47 @@ class SphereCamera:
             
             self.final_output[i, j] = color + ti.Vector([noise, noise, noise])
 
+    @ti.kernel
+    def render_black_hole(self, time: float):
+        mass = self.geo_engine.bh_mass[None]
+        
+        for i, j in self.final_output:
+            accumulated_color = ti.Vector([0.0, 0.0, 0.0])
+            
+            for k in range(self.samples):
+                offset_x = ti.random() - 0.5
+                offset_y = ti.random() - 0.5
+                u = (float(i) + offset_x) / self.render_res * 2.0 - 1.0
+                v = (float(j) + offset_y) / self.render_res * 2.0 - 1.0
+                
+                # Setup Ray
+                ro = ti.Vector([0.0, 0.0, -8.0]) # Further back for black hole to see disk
+                rd = ti.Vector([u, v, 1.5]) 
+                rd /= ti.sqrt(rd[0]**2 + rd[1]**2 + rd[2]**2)
+                
+                # Apply camera rotations
+                rd = self.rot_z(rd, self.cam_roll)
+                ro = self.rot_x(ro, self.cam_tilt)
+                rd = self.rot_x(rd, self.cam_tilt)
+                ro = self.rot_y(ro, self.cam_pan)
+                rd = self.rot_y(rd, self.cam_pan)
+                
+                # Call Black Hole renderer
+                accumulated_color += self.geo_engine.black_hole.render(ro, rd, time, mass)
+                
+            final_color = accumulated_color / float(self.samples)
+            
+            # ACES Tone Mapping
+            a = 2.51
+            b = 0.03
+            c = 2.43
+            d = 0.59
+            e = 0.14
+            color = (final_color * (a * final_color + b)) / (final_color * (c * final_color + d) + e)
+            
+            # Spacecraft Sensor Noise
+            noise = (ti.random() - 0.5) * 0.04
+            self.final_output[i, j] = color + ti.Vector([noise, noise, noise])
+
     def get_image_data(self):
         return np.clip(self.final_output.to_numpy(), 0.0, 1.0)
