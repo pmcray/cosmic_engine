@@ -41,25 +41,49 @@ def _make_plan(t: Transition | None) -> TransitionPlan:
 
 
 class GraphRunner:
-    def __init__(self, graph: ShotGraph, output_path: str | Path):
+    def __init__(
+        self,
+        graph: ShotGraph,
+        output_path: str | Path,
+        artifact_store=None,
+        artifact_label: str | None = None,
+    ):
         self.graph = graph
         self.output_path = Path(output_path)
+        self.artifact_store = artifact_store
+        self._artifact = None
+        self._artifact_label = artifact_label
 
     def _shot_frames(self, shot: Shot) -> Iterator[np.ndarray]:
         cls = get_renderer(shot.renderer)
         renderer = cls(shot)
+        shot_artifact = (
+            self._artifact.begin_shot(shot) if self._artifact is not None else None
+        )
         try:
-            for frame in renderer.iter_frames():
+            for idx, frame in enumerate(renderer.iter_frames()):
+                if shot_artifact is not None:
+                    shot_artifact.on_frame(idx, frame)
                 yield frame
         finally:
+            if shot_artifact is not None:
+                shot_artifact.finalize()
             renderer.close()
 
     def run(self) -> Path:
         self.graph.validate()
         fps = self.graph.shots[0].fps
         palette = get_palette(self.graph.shots[0].palette.name)
+        if self.artifact_store is not None:
+            self._artifact = self.artifact_store.begin_render(
+                self.graph, label=self._artifact_label
+            )
+            self.output_path = self._artifact.video_path
         with VideoWriter(self.output_path, fps=fps, exposure_stops=palette.exposure) as vw:
             self._stream(vw)
+        if self._artifact is not None:
+            self._artifact.finalize(video_path=self.output_path)
+            return self._artifact.path
         return self.output_path
 
     def _stream(self, vw: VideoWriter) -> None:
@@ -114,5 +138,15 @@ class GraphRunner:
                 vw.append(f)
 
 
-def render_graph(graph: ShotGraph, output_path: str | Path) -> Path:
-    return GraphRunner(graph, output_path).run()
+def render_graph(
+    graph: ShotGraph,
+    output_path: str | Path,
+    artifact_store=None,
+    artifact_label: str | None = None,
+) -> Path:
+    return GraphRunner(
+        graph,
+        output_path,
+        artifact_store=artifact_store,
+        artifact_label=artifact_label,
+    ).run()
