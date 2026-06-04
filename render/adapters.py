@@ -61,7 +61,7 @@ class SlitScanTunnelRenderer(Renderer):
     def __init__(self, shot: Shot):
         super().__init__(shot)
         _ensure_taichi()
-        from infinite_director import ZPHCTransitionRenderer
+        from render.zphc import ZPHCTransitionRenderer
         side = max(self.width, self.height)
         self._r = ZPHCTransitionRenderer(res=side)
 
