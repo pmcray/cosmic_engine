@@ -1,0 +1,99 @@
+{
+  "title": "jupiter_to_stargate",
+  "schema_version": 1,
+  "shots": [
+    {
+      "id": "jupiter_approach",
+      "renderer": "gas_giant",
+      "params": {
+        "prewarm_frames": 80,
+        "rings": 0,
+        "pan": 0.0,
+        "pan_rate": 0.4,
+        "tilt": -0.35,
+        "light_dir": [0.707, 0.0, 0.707],
+        "samples": 4
+      },
+      "camera": {
+        "position": [0.0, 0.0, -8.0],
+        "target": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 45.0,
+        "path_to": {
+          "position": [0.0, 0.0, -4.5],
+          "target": [0.0, 0.0, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 35.0
+        }
+      },
+      "palette": { "name": "trumbull_2001", "intensity": 1.0 },
+      "duration_frames": 96,
+      "fps": 24,
+      "resolution": [1920, 1080],
+      "seed": 19680401,
+      "motion_hint": "push_in"
+    },
+    {
+      "id": "kerr_anomaly",
+      "renderer": "kerr_black_hole",
+      "params": {
+        "spin": 0.85,
+        "inclination_deg": 82.0,
+        "disk_outer": 14.0,
+        "steps": 260,
+        "step_size": 0.1
+      },
+      "camera": {
+        "position": [0.0, 6.0, -22.0],
+        "target": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 38.0,
+        "path_to": {
+          "position": [0.0, 3.0, -14.0],
+          "target": [0.0, 0.0, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 30.0
+        }
+      },
+      "palette": { "name": "trumbull_2001", "intensity": 1.0 },
+      "duration_frames": 96,
+      "fps": 24,
+      "resolution": [1920, 1080],
+      "seed": 2001,
+      "motion_hint": "approach"
+    },
+    {
+      "id": "stargate_tunnel",
+      "renderer": "slitscan_tunnel",
+      "params": { "time_scale": 0.04 },
+      "camera": {
+        "position": [0.0, 0.0, 0.0],
+        "target": [0.0, 0.0, 1.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 90.0
+      },
+      "palette": { "name": "trumbull_2001", "intensity": 1.2 },
+      "duration_frames": 144,
+      "fps": 24,
+      "resolution": [1920, 1080],
+      "seed": 314159,
+      "motion_hint": "tunnel"
+    }
+  ],
+  "transitions": [
+    {
+      "from_shot": "jupiter_approach",
+      "to_shot": "kerr_anomaly",
+      "kind": "crossfade",
+      "duration_frames": 18,
+      "params": { "histogram_strength": 0.75, "smoothstep": true }
+    },
+    {
+      "from_shot": "kerr_anomaly",
+      "to_shot": "stargate_tunnel",
+      "kind": "slitscan",
+      "duration_frames": 24,
+      "params": { "intensity": 1.3 }
+    }
+  ]
+}

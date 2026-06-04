@@ -206,9 +206,27 @@ class InfiniteDirector:
         self.output_dir = output_dir
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-            
+
         self.segments = []
         self.iteration = 0
+
+    def run_from_manifest(self, manifest_path, output_name="sequence.mp4"):
+        """Render a ShotGraph defined by a JSON manifest.
+
+        This is the modern path: each shot is rendered by a registered
+        Renderer, transitions are produced by the continuity engine, and
+        the result is a single tone-mapped MP4 with no hard cuts.
+        Side-by-side with `run_infinite_loop` for now; the legacy loop
+        is kept until the worldmaker/weorold integrations are themselves
+        manifest-driven.
+        """
+        import render.adapters  # noqa: F401  ensures renderers are registered
+        from scene.manifest import load_manifest
+        from director.graph import render_graph
+
+        graph = load_manifest(manifest_path)
+        out_path = os.path.join(self.output_dir, output_name)
+        return render_graph(graph, out_path)
             
     def run_infinite_loop(self, max_iterations=3, test_mode=False):
         print("=== INITIATING INFINITE DIRECTOR SEQUENCE ===")
