@@ -14,7 +14,6 @@ References used to crib the formulas:
   - Page & Thorne 1974 (radiative efficiency of the relativistic disk)
   - James et al. 2015 (the Interstellar paper; lookup-table approach)
 """
-from __future__ import annotations
 
 import math
 
@@ -78,7 +77,7 @@ if ti is not None:
             return r * r + a * a * ctheta * ctheta
 
         @ti.kernel
-        def render_frame(self, time: float):
+        def render_frame(self, time: ti.f32):
             a = self.spin[None]
             sin_i = ti.sin(self.incl[None])
             cos_i = ti.cos(self.incl[None])
