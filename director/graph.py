@@ -70,7 +70,7 @@ class GraphRunner:
                 shot_artifact.finalize()
             renderer.close()
 
-    def run(self) -> Path:
+    def run(self, write_video: bool = True) -> Path:
         self.graph.validate()
         fps = self.graph.shots[0].fps
         palette = get_palette(self.graph.shots[0].palette.name)
@@ -79,18 +79,24 @@ class GraphRunner:
                 self.graph, label=self._artifact_label
             )
             self.output_path = self._artifact.video_path
-        with VideoWriter(self.output_path, fps=fps, exposure_stops=palette.exposure) as vw:
-            self._stream(vw)
+        if write_video:
+            with VideoWriter(self.output_path, fps=fps, exposure_stops=palette.exposure) as vw:
+                self._stream(vw)
+        else:
+            self._stream(None)
         if self._artifact is not None:
-            self._artifact.finalize(video_path=self.output_path)
+            self._artifact.finalize(
+                video_path=self.output_path if write_video else None
+            )
             return self._artifact.path
         return self.output_path
 
-    def _stream(self, vw: VideoWriter) -> None:
+    def _stream(self, vw: VideoWriter | None) -> None:
+        def emit(frame):
+            if vw is not None:
+                vw.append(frame)
+
         pairs = list(self.graph.iter_pairs())
-        # Pre-buffer head frames of each shot's neighbor so transitions
-        # can blend without re-rendering. We run shot generators on the
-        # fly with a sliding tail buffer.
         prev_tail: list[np.ndarray] = []
         prev_plan: TransitionPlan | None = None
         for i, (shot, trans, nxt) in enumerate(pairs):
@@ -106,36 +112,29 @@ class GraphRunner:
                 except StopIteration:
                     break
 
-            # Emit bridge from previous tail into this shot's head.
             if prev_plan is not None and prev_tail and head_buf:
                 engine = TransitionEngine(prev_plan)
                 for bridge_frame in engine.bridge(prev_tail, head_buf):
-                    vw.append(bridge_frame)
-                # The bridge replaces the overlapped frames on both sides:
-                # we've already consumed `head_n` frames of this shot, and
-                # we did not write the tail of the previous shot.
+                    emit(bridge_frame)
 
-            # Stream the body of this shot with a rolling tail buffer.
             tail_buf: deque[np.ndarray] = deque(maxlen=tail_n) if tail_n else deque()
             for f in frames_iter:
                 if tail_n:
                     if len(tail_buf) == tail_buf.maxlen and tail_buf[0] is not None:
-                        vw.append(tail_buf[0])
+                        emit(tail_buf[0])
                     tail_buf.append(f)
                 else:
-                    vw.append(f)
+                    emit(f)
 
             if tail_n == 0:
-                # nothing buffered; nothing to hand off
                 prev_tail = []
             else:
                 prev_tail = list(tail_buf)
             prev_plan = plan
 
-        # Last shot has no successor: flush the tail buffer.
         if prev_tail:
             for f in prev_tail:
-                vw.append(f)
+                emit(f)
 
 
 def render_graph(
@@ -143,10 +142,11 @@ def render_graph(
     output_path: str | Path,
     artifact_store=None,
     artifact_label: str | None = None,
+    write_video: bool = True,
 ) -> Path:
     return GraphRunner(
         graph,
         output_path,
         artifact_store=artifact_store,
         artifact_label=artifact_label,
-    ).run()
+    ).run(write_video=write_video)

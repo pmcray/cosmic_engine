@@ -13,6 +13,18 @@ critic (Claude vision / LLaVA / CLIP), and the human-in-the-loop UI.
 from .artifacts import ArtifactStore, RenderArtifact, ShotArtifact
 from .metrics import MetricsCritic, MetricSet, ShotMetrics
 from .provenance import capture_provenance
+from .producer import (
+    EpsilonGreedyProducer,
+    MutationSpace,
+    ParamSpec,
+    Producer,
+    RandomProducer,
+    shot_palette,
+    shot_param,
+    shot_seed,
+    transition_kind,
+)
+from .session import Attempt, Session
 
 __all__ = [
     "ArtifactStore",
@@ -22,4 +34,15 @@ __all__ = [
     "MetricSet",
     "ShotMetrics",
     "capture_provenance",
+    "Attempt",
+    "Session",
+    "Producer",
+    "RandomProducer",
+    "EpsilonGreedyProducer",
+    "MutationSpace",
+    "ParamSpec",
+    "shot_param",
+    "shot_palette",
+    "shot_seed",
+    "transition_kind",
 ]
