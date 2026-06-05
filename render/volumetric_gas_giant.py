@@ -122,6 +122,29 @@ def _apply_overlay(color_map, alpha_map, mask, color):
     np.maximum(alpha_map, mask, out=alpha_map)
 
 
+def _smooth_2d(arr, n_passes=2):
+    """Light separable box blur for anti-aliasing band boundaries.
+
+    Operates in-place semantically. Longitude wraps via np.roll; the
+    latitude axis uses edge-replicate by clipping the rolled indices.
+    A 3-tap kernel iterated n_passes times approximates a Gaussian.
+    """
+    for _ in range(n_passes):
+        # Latitude axis: edge-replicate by clamping the shift.
+        up = np.concatenate([arr[:1], arr[:-1]], axis=0)
+        dn = np.concatenate([arr[1:], arr[-1:]], axis=0)
+        arr = (up + arr + dn) / 3.0
+        # Longitude axis: wraps naturally.
+        arr = (np.roll(arr, 1, axis=1) + arr + np.roll(arr, -1, axis=1)) / 3.0
+    return arr.astype(np.float32)
+
+
+def _saturate(color_arr, amount=1.3):
+    """Multiply chromatic distance from luminance to deepen colors."""
+    luma = color_arr.mean(axis=-1, keepdims=True)
+    return (luma + (color_arr - luma) * amount).astype(np.float32)
+
+
 def bake_textures(
     height=512,
     width=1024,
@@ -215,61 +238,17 @@ def bake_textures(
         base_color[..., 1] -= env * roll * 0.045
         base_color[..., 2] -= env * roll * 0.03
 
-    base_color = np.clip(base_color, 0.0, 1.5).astype(np.float32)
+    # ---- 4.5 Anti-alias the wavy band assignment + boost saturation --
+    base_color = _smooth_2d(np.clip(base_color, 0.0, 1.5), n_passes=2)
+    base_color = _saturate(base_color, amount=1.28)
 
-    # ---- 5. Storm placement ------------------------------------------
-    storm_color = base_color.copy()
-    storm_alpha = np.zeros((height, width), dtype=np.float32)
-
-    # 5a. Great Red Spot — more vivid, with an outer pink halo + dark
-    # crimson core + a turbulent "wake" on the trailing side.
-    grs_mask = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 9.0, 20.0,
-                             intensity=0.95, falloff=2.0)
-    grs_inner = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 5.5, 13.0,
-                              intensity=0.92, falloff=2.5)
-    grs_core = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 2.8, 7.0,
-                             intensity=0.85, falloff=3.0)
-    _apply_overlay(storm_color, storm_alpha, grs_mask * 0.85,
-                   color=(0.92, 0.42, 0.20))
-    _apply_overlay(storm_color, storm_alpha, grs_inner,
-                   color=(0.85, 0.26, 0.12))
-    _apply_overlay(storm_color, storm_alpha, grs_core,
-                   color=(0.68, 0.16, 0.08))
-    band_density += grs_mask * 0.25
-
-    # GRS wake: a trailing K-H disturbance on the east side.
-    wake_lon = grs_lon + 22.0
-    wake_mask = _ellipse_mask(lat2d, lon2d, -22.5, wake_lon, 4.0, 18.0,
-                              intensity=0.4, falloff=1.5)
-    wake_roll = np.sin((lon2d - grs_lon) * 0.5 * math.pi / 180.0) * 0.5
-    _apply_overlay(storm_color, storm_alpha,
-                   wake_mask * np.clip(wake_roll, 0.0, 1.0),
-                   color=(0.88, 0.55, 0.35))
-
-    # 5b. White ovals (Oval BA and friends) along STZ.
-    for lon_c in white_oval_lons:
-        m = _ellipse_mask(lat2d, lon2d, -33.0, lon_c, 2.4, 5.0,
-                          intensity=0.7, falloff=2.5)
-        _apply_overlay(storm_color, storm_alpha, m, color=(0.94, 0.92, 0.85))
-        band_density += m * 0.18
-
-    # 5c. Brown barges along the NEB.
-    for lon_c in brown_barge_lons:
-        m = _ellipse_mask(lat2d, lon2d, 18.0, lon_c, 1.8, 12.0,
-                          intensity=0.55, falloff=2.0)
-        _apply_overlay(storm_color, storm_alpha, m, color=(0.30, 0.18, 0.10))
-
-    # 5d. Polar cyclones: 1 central + 8 around at lat = +/-83, 45 deg spacing.
-    for sign in (+1, -1):
-        m_c = _ellipse_mask(lat2d, lon2d, sign * 89.0, 0.0, 4.0, 30.0,
-                            intensity=0.55, falloff=2.0)
-        _apply_overlay(storm_color, storm_alpha, m_c, color=(0.78, 0.58, 0.40))
-        for k in range(8):
-            lc = -180.0 + 45.0 * k
-            m_k = _ellipse_mask(lat2d, lon2d, sign * 83.0, lc, 3.0, 20.0,
-                                intensity=0.55, falloff=2.0)
-            _apply_overlay(storm_color, storm_alpha, m_k,
-                           color=(0.82, 0.62, 0.42))
+    # ---- 4.6 Polar darkening (brownish-blue at the poles) ------------
+    polar = np.clip((np.abs(lat2d) - 60.0) / 30.0, 0.0, 1.0)
+    polar_tint = np.array([0.38, 0.40, 0.46], dtype=np.float32)
+    base_color = (
+        base_color * (1.0 - polar[..., None] * 0.45)
+        + polar_tint[None, None, :] * polar[..., None] * 0.45
+    ).astype(np.float32)
 
     # ---- 6. Three-layer cloud composite -------------------------------
     # Layer 1 (NH3 ice) density follows storm_color "whitishness".
@@ -299,9 +278,59 @@ def bake_textures(
     surface = (np.array(LAYER_COLORS[0], dtype=np.float32)[None, None, :]
                * a1[..., None] + surface * (1.0 - a1[..., None]))
 
-    # Blend with the band+storm color (storms keep their identity through
-    # the top layer; bands tint by their characteristic colour).
-    blended = surface * 0.45 + storm_color * 0.55
+    blended = surface * 0.40 + base_color * 0.60
+
+    # ---- 7. Storms applied AFTER the layer blend (full strength) -----
+    storm_alpha = np.zeros((height, width), dtype=np.float32)
+
+    # 7a. Great Red Spot: wider, lower-falloff so the halo extends, more
+    # saturated reds across the three concentric ellipses, plus a
+    # trailing wake on the east side.
+    grs_outer = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 11.5, 26.0,
+                              intensity=0.90, falloff=1.6)
+    grs_body = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 7.0, 16.0,
+                             intensity=0.96, falloff=2.0)
+    grs_core = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 3.2, 8.0,
+                             intensity=0.90, falloff=2.6)
+    _apply_overlay(blended, storm_alpha, grs_outer * 0.85,
+                   color=(0.95, 0.44, 0.20))
+    _apply_overlay(blended, storm_alpha, grs_body,
+                   color=(0.88, 0.24, 0.10))
+    _apply_overlay(blended, storm_alpha, grs_core,
+                   color=(0.72, 0.13, 0.06))
+
+    wake_lon = grs_lon + 26.0
+    wake_mask = _ellipse_mask(lat2d, lon2d, -22.5, wake_lon, 4.5, 22.0,
+                              intensity=0.45, falloff=1.4)
+    wake_roll = np.clip(
+        np.sin((lon2d - grs_lon) * 0.5 * math.pi / 180.0) * 0.6, 0.0, 1.0
+    )
+    _apply_overlay(blended, storm_alpha, wake_mask * wake_roll,
+                   color=(0.85, 0.50, 0.30))
+
+    # 7b. White ovals along the STZ.
+    for lon_c in white_oval_lons:
+        m = _ellipse_mask(lat2d, lon2d, -33.0, lon_c, 2.6, 5.4,
+                          intensity=0.78, falloff=2.3)
+        _apply_overlay(blended, storm_alpha, m, color=(0.96, 0.94, 0.88))
+
+    # 7c. Brown barges along the NEB.
+    for lon_c in brown_barge_lons:
+        m = _ellipse_mask(lat2d, lon2d, 18.0, lon_c, 2.0, 13.0,
+                          intensity=0.62, falloff=1.9)
+        _apply_overlay(blended, storm_alpha, m, color=(0.26, 0.15, 0.08))
+
+    # 7d. Polar cyclones: central + 8 surrounding at lat = +/-83.
+    for sign in (+1, -1):
+        m_c = _ellipse_mask(lat2d, lon2d, sign * 89.0, 0.0, 4.0, 30.0,
+                            intensity=0.55, falloff=2.0)
+        _apply_overlay(blended, storm_alpha, m_c, color=(0.78, 0.58, 0.40))
+        for k in range(8):
+            lc = -180.0 + 45.0 * k
+            m_k = _ellipse_mask(lat2d, lon2d, sign * 83.0, lc, 3.0, 20.0,
+                                intensity=0.55, falloff=2.0)
+            _apply_overlay(blended, storm_alpha, m_k,
+                           color=(0.82, 0.62, 0.42))
 
     layer_density = np.stack([layer_top_d, layer_mid_d, layer_deep_d], axis=-1).astype(np.float32)
     return blended.astype(np.float32), layer_density, band_omega_per_row
