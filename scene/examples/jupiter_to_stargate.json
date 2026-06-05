@@ -4,26 +4,28 @@
   "shots": [
     {
       "id": "jupiter_approach",
-      "renderer": "gas_giant",
+      "renderer": "volumetric_gas_giant",
       "params": {
-        "prewarm_frames": 80,
-        "rings": 0,
-        "pan": 0.0,
-        "pan_rate": 0.4,
-        "tilt": -0.35,
-        "light_dir": [0.707, 0.0, 0.707],
-        "samples": 4
+        "atm_thickness": 0.028,
+        "march_steps": 28,
+        "samples": 2,
+        "tex_height": 512,
+        "tex_width": 1024,
+        "sun_dir": [0.55, 0.18, 0.81],
+        "grs_lon": 100.0,
+        "seed": 42,
+        "push_in_factor": 1.45
       },
       "camera": {
-        "position": [0.0, 0.0, -8.0],
-        "target": [0.0, 0.0, 0.0],
+        "position": [0.0, 0.25, -4.0],
+        "target": [0.0, -0.1, 0.0],
         "up": [0.0, 1.0, 0.0],
-        "fov_deg": 45.0,
+        "fov_deg": 36.0,
         "path_to": {
-          "position": [0.0, 0.0, -4.5],
-          "target": [0.0, 0.0, 0.0],
+          "position": [0.15, 0.05, -2.6],
+          "target": [0.0, -0.15, 0.0],
           "up": [0.0, 1.0, 0.0],
-          "fov_deg": 35.0
+          "fov_deg": 30.0
         }
       },
       "palette": { "name": "trumbull_2001", "intensity": 1.0 },

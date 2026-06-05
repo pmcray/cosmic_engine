@@ -167,10 +167,18 @@ def test_example_manifest_loads() -> None:
     p = ROOT / "scene" / "examples" / "jupiter_to_stargate.json"
     g = load_manifest(p)
     assert len(g.shots) == 3
-    assert g.shots[0].renderer == "gas_giant"
+    # Jovian shot uses the volumetric renderer (the legacy `gas_giant`
+    # falls into a green Pi-Lattice debug pattern when its hidden
+    # observer_attention isn't set; the example should not depend on it).
+    assert g.shots[0].renderer == "volumetric_gas_giant"
     assert g.shots[1].renderer == "kerr_black_hole"
     assert g.shots[2].renderer == "slitscan_tunnel"
     assert g.transitions[1].kind == "slitscan"
+    # Camera distance must keep the planet inside the frame for the
+    # volumetric renderer's coordinate convention (planet_radius=1).
+    cam = g.shots[0].camera
+    assert abs(cam.position[2]) < 6.0, "camera too far for planet_radius=1"
+    assert abs(cam.path_to.position[2]) >= 1.5, "camera path ends inside planet"
     print("ok: test_example_manifest_loads")
 
 

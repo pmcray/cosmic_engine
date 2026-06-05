@@ -184,6 +184,14 @@ class GasGiantRenderer(Renderer):
         for f in range(int(shot.params.get("prewarm_frames", 60))):
             self._fluid.step(f)
         self._sim_frame = 0
+        # SphereCamera renders the Jovian shading conditionally on
+        # `geo_engine.observer_attention`. The default of 0.0 produces a
+        # green Pi-Lattice debug pattern instead of the textured planet
+        # because the cast_ray composite is
+        # `w_color * (1 - attention) + color * attention`. Force the
+        # camera into the "observed" state so the cloud shader actually
+        # runs end-to-end.
+        self._cam.geo_engine.update_observer_attention(1.0)
 
     def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
         self._fluid.step(self._sim_frame)
