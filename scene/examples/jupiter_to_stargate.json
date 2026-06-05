@@ -12,7 +12,7 @@
         "tex_height": 512,
         "tex_width": 1024,
         "sun_dir": [-0.55, 0.18, -0.81],
-        "grs_lon": 100.0,
+        "grs_lon": -60.0,
         "seed": 42,
         "push_in_factor": 1.45
       },

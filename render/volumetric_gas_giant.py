@@ -126,7 +126,7 @@ def bake_textures(
     height=512,
     width=1024,
     seed=0,
-    grs_lon=100.0,
+    grs_lon=-60.0,
     white_oval_lons=(-150.0, -80.0, 30.0, 110.0, 180.0),
     brown_barge_lons=(-100.0, 0.0, 100.0),
 ):
@@ -144,67 +144,107 @@ def bake_textures(
     lon = np.linspace(-180.0, 180.0, width, dtype=np.float32)
     lat2d, lon2d = np.meshgrid(lat, lon, indexing="ij")
 
-    # ---- 1. Per-band base color, density, and drift omega -------------
     base_color = np.zeros((height, width, 3), dtype=np.float32)
     base_density = np.zeros((height, width), dtype=np.float32)
     band_omega_per_row = np.zeros((height,), dtype=np.float32)
 
-    # Jupiter equatorial circumference ~ 4.4e8 m; converting m/s -> rad/s.
-    # We multiply by an aesthetic constant so cinematic time-lapse is visible
-    # without the user having to dial it up.
     R_eq_m = 4.4e8 / (2.0 * math.pi)
-    drift_aesthetic = 8.0e4  # ~80,000x real-time
+    drift_aesthetic = 8.0e4
 
+    # ---- 1. Wavy band boundaries -------------------------------------
+    # Real Jovian bands are not straight — they undulate from K-H rolls.
+    # Displace the latitude at which we look up the band assignment by
+    # a multi-scale fBM + a long-wavelength sinusoid.
+    lat_wave_fbm = _fbm_2d((height, width), octaves=4, persistence=0.55,
+                           seed=seed + 11) * 2.2
+    lat_wave_sin = (
+        np.sin(lon2d * (math.pi / 180.0) * 2.0) * 1.0
+        + np.sin(lon2d * (math.pi / 180.0) * 5.0) * 0.45
+    ).astype(np.float32)
+    effective_lat = lat2d + lat_wave_fbm + lat_wave_sin
+
+    # Per-pixel band assignment (wavy). Per-row omega still uses real lat.
     for (lo, hi, _name, color, dens, wind) in JOVIAN_BANDS:
-        mask = (lat >= lo) & (lat <= hi)
+        mask = (effective_lat >= lo) & (effective_lat < hi)
         for k in range(3):
-            base_color[mask, :, k] = color[k]
-        base_density[mask, :] = dens
-        omega = (wind / R_eq_m) * drift_aesthetic
-        band_omega_per_row[mask] = omega
+            base_color[mask, k] = color[k]
+        base_density[mask] = dens
+        row_mask = (lat >= lo) & (lat <= hi)
+        band_omega_per_row[row_mask] = (wind / R_eq_m) * drift_aesthetic
 
-    # ---- 2. Smooth zone/belt boundaries (latitude-only) ---------------
-    for k in range(3):
-        chan = base_color[:, 0, k]
-        chan = np.convolve(chan, np.ones(7) / 7.0, mode="same")
-        for j in range(width):
-            base_color[:, j, k] = chan
-    dens_row = np.convolve(base_density[:, 0], np.ones(7) / 7.0, mode="same")
-    base_density[:] = dens_row[:, None]
-    band_omega_per_row = np.convolve(band_omega_per_row, np.ones(5) / 5.0, mode="same").astype(np.float32)
+    band_omega_per_row = np.convolve(
+        band_omega_per_row, np.ones(5) / 5.0, mode="same"
+    ).astype(np.float32)
 
-    # ---- 3. Multi-scale fBM turbulence in band density ---------------
+    # ---- 2. Chromatic band texture (turbulent eddies in COLOR) -------
+    # Two-octave fBM modulates each channel slightly differently so the
+    # noise reads as varying pigment, not just brightness.
+    chrom_a = _fbm_2d((height, width), octaves=6, persistence=0.55, seed=seed + 21)
+    chrom_b = _fbm_2d((height, width), octaves=5, persistence=0.45, seed=seed + 22)
+    base_color[..., 0] += chrom_a * 0.07 + chrom_b * 0.04
+    base_color[..., 1] += chrom_a * 0.05 + chrom_b * 0.025
+    base_color[..., 2] += chrom_a * 0.025 + chrom_b * 0.015
+
+    # Belts kick up an extra noise-driven darkening (turbulent eddies).
+    is_belt = base_density > 0.93
+    belt_eddy = np.abs(_fbm_2d((height, width), octaves=5, persistence=0.5,
+                               seed=seed + 23)) * 0.10
+    base_color[is_belt, 0] -= belt_eddy[is_belt]
+    base_color[is_belt, 1] -= belt_eddy[is_belt] * 0.8
+    base_color[is_belt, 2] -= belt_eddy[is_belt] * 0.6
+
+    # ---- 3. Multi-scale fBM in band density --------------------------
     n_big = _fbm_2d((height, width), octaves=6, persistence=0.55, seed=seed)
     n_small = _fbm_2d((height, width), octaves=5, persistence=0.45, seed=seed + 1)
     band_density = base_density + n_big * 0.18 + n_small * 0.08
-    # Slight zonal compression in turbulence (zones less turbulent than belts).
-    is_belt = base_density > 0.93
     band_density[is_belt] += np.abs(n_small[is_belt]) * 0.10
 
-    # ---- 4. Kelvin-Helmholtz rolls at zone/belt boundaries -----------
+    # ---- 4. Kelvin-Helmholtz rolls visible in color + density --------
     for lat_b, wavelen in (
         (-20.0, 18.0), (-7.0, 24.0), (7.0, 24.0), (20.0, 18.0), (28.0, 15.0),
     ):
-        env = np.exp(-((lat2d - lat_b) / 1.5) ** 2)
-        roll = np.sin(lon2d * (360.0 / wavelen) * math.pi / 180.0
-                      + 0.4 * np.sin(lon2d * 0.05))
-        band_density += env * roll * 0.06
+        env = np.exp(-((lat2d - lat_b) / 1.8) ** 2).astype(np.float32)
+        roll = np.sin(
+            lon2d * (360.0 / wavelen) * math.pi / 180.0
+            + 0.4 * np.sin(lon2d * 0.05)
+        ).astype(np.float32)
+        band_density += env * roll * 0.07
+        # K-H rolls also locally darken/lighten color so they're visible
+        # in the final composite, not just hidden in cloud density.
+        base_color[..., 0] -= env * roll * 0.06
+        base_color[..., 1] -= env * roll * 0.045
+        base_color[..., 2] -= env * roll * 0.03
+
+    base_color = np.clip(base_color, 0.0, 1.5).astype(np.float32)
 
     # ---- 5. Storm placement ------------------------------------------
     storm_color = base_color.copy()
     storm_alpha = np.zeros((height, width), dtype=np.float32)
 
-    # 5a. Great Red Spot — large counter-rotating vortex in the SEB.
+    # 5a. Great Red Spot — more vivid, with an outer pink halo + dark
+    # crimson core + a turbulent "wake" on the trailing side.
     grs_mask = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 9.0, 20.0,
                              intensity=0.95, falloff=2.0)
-    # Inner darker core + outer reddish halo.
-    inner_mask = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 5.5, 13.0,
-                               intensity=0.85, falloff=2.5)
+    grs_inner = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 5.5, 13.0,
+                              intensity=0.92, falloff=2.5)
+    grs_core = _ellipse_mask(lat2d, lon2d, -22.5, grs_lon, 2.8, 7.0,
+                             intensity=0.85, falloff=3.0)
     _apply_overlay(storm_color, storm_alpha, grs_mask * 0.85,
-                   color=(0.78, 0.36, 0.20))
-    _apply_overlay(storm_color, storm_alpha, inner_mask,
-                   color=(0.65, 0.22, 0.13))
-    band_density += grs_mask * 0.25  # GRS reads thicker than surrounding belt
+                   color=(0.92, 0.42, 0.20))
+    _apply_overlay(storm_color, storm_alpha, grs_inner,
+                   color=(0.85, 0.26, 0.12))
+    _apply_overlay(storm_color, storm_alpha, grs_core,
+                   color=(0.68, 0.16, 0.08))
+    band_density += grs_mask * 0.25
+
+    # GRS wake: a trailing K-H disturbance on the east side.
+    wake_lon = grs_lon + 22.0
+    wake_mask = _ellipse_mask(lat2d, lon2d, -22.5, wake_lon, 4.0, 18.0,
+                              intensity=0.4, falloff=1.5)
+    wake_roll = np.sin((lon2d - grs_lon) * 0.5 * math.pi / 180.0) * 0.5
+    _apply_overlay(storm_color, storm_alpha,
+                   wake_mask * np.clip(wake_roll, 0.0, 1.0),
+                   color=(0.88, 0.55, 0.35))
 
     # 5b. White ovals (Oval BA and friends) along STZ.
     for lon_c in white_oval_lons:
@@ -300,7 +340,7 @@ else:
         march_steps=24,
         samples=2,
         sun_dir=(-0.55, 0.18, -0.81),
-        grs_lon=100.0,
+        grs_lon=-60.0,
         seed=0,
     ):
         self.width = int(width)
