@@ -105,6 +105,59 @@ class KerrBlackHoleRenderer(Renderer):
         return _resize_to(img, self.height, self.width)
 
 
+@register_renderer("volumetric_gas_giant")
+class VolumetricGasGiantRenderer(Renderer):
+    """Volumetric Jupiter / gas-giant renderer with atmospheric scattering,
+    multi-layer cloud composite, realistic banding, and parameterized
+    storm features.
+
+    Expected params:
+        atm_thickness   : float, shell radius above planet (default 0.025)
+        march_steps     : int, atmosphere ray-march steps (default 24)
+        samples         : int, AA samples per pixel (default 2)
+        tex_height      : int, baked texture height (default 512)
+        tex_width       : int, baked texture width (default 1024)
+        sun_dir         : (x, y, z), sun direction (default (0.707, 0.0, 0.707))
+        grs_lon         : float, longitude of Great Red Spot (default 100.0)
+        seed            : int, texture bake seed (default 0)
+        push_in_factor  : float, how much closer the camera ends up at t=1
+                          (default 1.0 = stay; 1.4 = +40% closer)
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.volumetric_gas_giant import VolumetricGasGiantEngine
+        side = max(self.width, self.height)
+        self._engine = VolumetricGasGiantEngine(
+            res=side,
+            tex_height=int(shot.params.get("tex_height", 512)),
+            tex_width=int(shot.params.get("tex_width", 1024)),
+            atm_thickness=float(shot.params.get("atm_thickness", 0.025)),
+            march_steps=int(shot.params.get("march_steps", 24)),
+            samples=int(shot.params.get("samples", 2)),
+            sun_dir=tuple(shot.params.get("sun_dir", (0.707, 0.0, 0.707))),
+            grs_lon=float(shot.params.get("grs_lon", 100.0)),
+            seed=int(shot.params.get("seed", shot.seed)),
+        )
+        self._push_in = float(shot.params.get("push_in_factor", 1.0))
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pos = np.asarray(camera.position, dtype=np.float32)
+        if self._push_in != 1.0:
+            scale = 1.0 / (1.0 + (self._push_in - 1.0) * t)
+            pos = pos * scale
+        self._engine.set_camera(
+            position=tuple(pos.tolist()),
+            target=tuple(camera.target),
+            up_world=tuple(camera.up),
+            fov_deg=float(camera.fov_deg),
+        )
+        self._engine.render(float(frame_idx) * 0.05)
+        img = self._engine.pixels.to_numpy().astype(np.float32)
+        return _resize_to(img, self.height, self.width)
+
+
 @register_renderer("gas_giant")
 class GasGiantRenderer(Renderer):
     """Wraps `render.camera.SphereCamera.render_gas_giant` with a fluid sim.

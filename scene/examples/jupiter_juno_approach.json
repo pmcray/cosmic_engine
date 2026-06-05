@@ -1,0 +1,119 @@
+{
+  "title": "jupiter_juno_approach",
+  "schema_version": 1,
+  "shots": [
+    {
+      "id": "perijove_approach",
+      "renderer": "volumetric_gas_giant",
+      "params": {
+        "atm_thickness": 0.028,
+        "march_steps": 28,
+        "samples": 2,
+        "tex_height": 512,
+        "tex_width": 1024,
+        "sun_dir": [0.55, 0.18, 0.81],
+        "grs_lon": 100.0,
+        "seed": 42,
+        "push_in_factor": 1.55
+      },
+      "camera": {
+        "position": [0.0, 0.3, -3.6],
+        "target": [0.0, -0.1, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 36.0,
+        "path_to": {
+          "position": [0.25, 0.05, -2.2],
+          "target": [0.0, -0.15, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 30.0
+        }
+      },
+      "palette": { "name": "trumbull_2001", "intensity": 1.0 },
+      "duration_frames": 96,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 42,
+      "motion_hint": "push_in"
+    },
+    {
+      "id": "grs_close",
+      "renderer": "volumetric_gas_giant",
+      "params": {
+        "atm_thickness": 0.024,
+        "march_steps": 32,
+        "samples": 2,
+        "tex_height": 512,
+        "tex_width": 1024,
+        "sun_dir": [0.4, 0.05, 0.92],
+        "grs_lon": 100.0,
+        "seed": 42
+      },
+      "camera": {
+        "position": [0.65, -0.35, -1.4],
+        "target": [0.30, -0.42, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 22.0,
+        "path_to": {
+          "position": [0.45, -0.35, -1.25],
+          "target": [0.30, -0.42, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 22.0
+        }
+      },
+      "palette": { "name": "trumbull_2001", "intensity": 1.0 },
+      "duration_frames": 72,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 42,
+      "motion_hint": "drift"
+    },
+    {
+      "id": "north_pole_cyclones",
+      "renderer": "volumetric_gas_giant",
+      "params": {
+        "atm_thickness": 0.022,
+        "march_steps": 28,
+        "samples": 2,
+        "tex_height": 512,
+        "tex_width": 1024,
+        "sun_dir": [0.0, 0.95, 0.32],
+        "grs_lon": 100.0,
+        "seed": 42
+      },
+      "camera": {
+        "position": [0.0, 2.0, -1.4],
+        "target": [0.0, 0.85, 0.0],
+        "up": [0.0, 0.0, -1.0],
+        "fov_deg": 30.0,
+        "path_to": {
+          "position": [0.4, 2.1, -1.2],
+          "target": [0.0, 0.9, 0.0],
+          "up": [0.0, 0.0, -1.0],
+          "fov_deg": 28.0
+        }
+      },
+      "palette": { "name": "jwst_nircam", "intensity": 1.0 },
+      "duration_frames": 60,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 42,
+      "motion_hint": "polar_drift"
+    }
+  ],
+  "transitions": [
+    {
+      "from_shot": "perijove_approach",
+      "to_shot": "grs_close",
+      "kind": "crossfade",
+      "duration_frames": 16,
+      "params": { "histogram_strength": 0.6, "smoothstep": true }
+    },
+    {
+      "from_shot": "grs_close",
+      "to_shot": "north_pole_cyclones",
+      "kind": "crossfade",
+      "duration_frames": 14,
+      "params": { "histogram_strength": 0.5, "smoothstep": true }
+    }
+  ]
+}
