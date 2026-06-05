@@ -6,7 +6,7 @@
       "id": "jupiter_approach",
       "renderer": "volumetric_gas_giant",
       "params": {
-        "atm_thickness": 0.028,
+        "atm_thickness": 0.06,
         "march_steps": 28,
         "samples": 2,
         "tex_height": 512,

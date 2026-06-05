@@ -365,8 +365,8 @@ else:
         height=1024,
         tex_height=512,
         tex_width=1024,
-        atm_thickness=0.025,
-        march_steps=24,
+        atm_thickness=0.06,
+        march_steps=30,
         samples=2,
         sun_dir=(-0.55, 0.18, -0.81),
         grs_lon=-60.0,
@@ -487,6 +487,9 @@ else:
         rayleigh_color = ti.Vector([0.32, 0.58, 1.05])
         mie_color = ti.Vector([1.05, 0.97, 0.85])
         sun_color = ti.Vector([1.0, 0.97, 0.92])
+        # Rim-glow tint: cool blue Rayleigh haze that paints onto the
+        # surface where the line of sight grazes the lit limb.
+        rim_haze = ti.Vector([0.50, 0.66, 1.05])
 
         for i, j in self.pixels:
             accum = ti.Vector([0.0, 0.0, 0.0])
@@ -547,19 +550,23 @@ else:
                             r = p.norm()
                             alt = (r - R_p) / (R_atm - R_p)
                             alt = ti.max(0.0, ti.min(1.0, alt))
-                            density = ti.exp(-alt * 4.0)
+                            # Steeper density profile keeps the haze concentrated
+                            # near the surface even though the shell is thicker --
+                            # so the planet stays sharp and the halo softens with
+                            # altitude.
+                            density = ti.exp(-alt * 5.0)
 
                             n_p = p / (r + 1e-6)
                             cos_sun = sun_dir.dot(n_p)
                             sun_term = ti.max(0.0, (cos_sun + 0.08) / 1.08)
 
                             in_scatter = sun_term * (
-                                rayleigh_color * rayleigh_phase * 1.6
-                                + mie_color * mie_phase * 0.35
+                                rayleigh_color * rayleigh_phase * 2.1
+                                + mie_color * mie_phase * 0.55
                             ) * density
 
                             scattered += in_scatter * transmittance * dt
-                            sigma_t = density * 0.8
+                            sigma_t = density * 1.0
                             transmittance *= ti.exp(-sigma_t * dt)
                             if transmittance < 0.01:
                                 break
@@ -586,6 +593,17 @@ else:
                                 [ambient, ambient, ambient * 1.3]
                             )
                             scattered += base_col * surface_lit * transmittance
+
+                            # Atmospheric rim glow: a fresnel-like term that
+                            # paints a cool blue Rayleigh halo onto the lit
+                            # limb. Grazing rays (n . -rd small) get the most
+                            # contribution; the sun-side floor keeps the
+                            # night limb dark.
+                            view_n = ti.max(0.0, -rd.dot(n_surf))
+                            rim_fres = ti.pow(1.0 - view_n, 3.0)
+                            rim_sun = ti.max(0.0, (cos_n_sun + 0.20) / 1.20)
+                            rim_strength = rim_fres * rim_sun * 0.55
+                            scattered += rim_haze * rim_strength * transmittance
 
                         color = scattered + color * transmittance
 
