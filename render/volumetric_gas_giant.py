@@ -284,32 +284,37 @@ else:
   class VolumetricGasGiantEngine:
     """Volumetric Jovian renderer.
 
-    Resolution `res` is the output square side. Internally the planet
-    is at the origin, with `planet_radius = 1`, and the atmosphere
+    Renders directly into a (height, width) buffer (no separate
+    resize step), so the planet stays circular at any output aspect.
+    Planet sits at the origin with `planet_radius = 1`; the atmosphere
     shell extends to `1 + atm_thickness`.
     """
 
     def __init__(
         self,
-        res=1024,
+        width=1024,
+        height=1024,
         tex_height=512,
         tex_width=1024,
         atm_thickness=0.025,
         march_steps=24,
         samples=2,
-        sun_dir=(0.707, 0.0, 0.707),
+        sun_dir=(-0.55, 0.18, -0.81),
         grs_lon=100.0,
         seed=0,
     ):
-        self.res = int(res)
+        self.width = int(width)
+        self.height = int(height)
+        self.aspect = float(self.width) / float(self.height)
         self.tex_h = int(tex_height)
         self.tex_w = int(tex_width)
         self.atm_thickness = float(atm_thickness)
         self.march_steps = int(march_steps)
         self.samples = int(samples)
 
-        # Output buffer.
-        self.pixels = ti.Vector.field(3, dtype=ti.f32, shape=(self.res, self.res))
+        # Output buffer is (H, W) so the renderer can produce 16:9
+        # (or any rectangular) frames natively.
+        self.pixels = ti.Vector.field(3, dtype=ti.f32, shape=(self.height, self.width))
 
         # Baked textures.
         surface_color, layer_density, band_omega = bake_textures(
@@ -327,7 +332,7 @@ else:
         # [3..5]  camera forward
         # [6..8]  camera right
         # [9..11] camera up
-        # [12]    fov_scale = tan(fov/2)
+        # [12]    fov_scale = tan(vertical_fov/2)
         # [13..15] sun direction (normalized)
         self.cam = ti.field(dtype=ti.f32, shape=(16,))
         self._set_default_camera()
@@ -421,12 +426,19 @@ else:
                 # Stratified jitter.
                 jx = (ti.random() - 0.5) / self.samples
                 jy = (ti.random() - 0.5) / self.samples
-                u = ((float(j) + 0.5 + jx) / self.res) * 2.0 - 1.0
-                v = ((float(i) + 0.5 + jy) / self.res) * 2.0 - 1.0
-                # Image-plane convention: +v is down in array space, up in scene.
+                # u in [-1, 1] across width, v in [-1, 1] across height.
+                # Multiply u by aspect so a unit angular step right matches
+                # a unit angular step up -- keeps the planet circular at any
+                # output aspect (fov_scale is half-vertical-fov).
+                u = ((float(j) + 0.5 + jx) / self.width) * 2.0 - 1.0
+                v = ((float(i) + 0.5 + jy) / self.height) * 2.0 - 1.0
                 v = -v
 
-                rd = cam_fwd + cam_right * u * fov_scale + cam_up * v * fov_scale
+                rd = (
+                    cam_fwd
+                    + cam_right * (u * fov_scale * self.aspect)
+                    + cam_up * (v * fov_scale)
+                )
                 rd = rd / (rd.norm() + 1e-8)
 
                 # Sphere intersections (with planet center at origin).

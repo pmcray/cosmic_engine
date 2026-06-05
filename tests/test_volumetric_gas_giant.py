@@ -134,6 +134,43 @@ def test_example_manifest_loads() -> None:
     print("ok: test_example_manifest_loads")
 
 
+def test_sun_dir_illuminates_camera_facing_hemisphere() -> None:
+    """For shots whose camera looks toward +Z (camera at -Z), the
+    sun_dir must have a non-positive Z component so the day side of
+    the planet faces the camera. The opposite sign puts us behind
+    Jupiter looking at the night side -- which is exactly the bug
+    that produced the thin-crescent-only render.
+
+    The polar shot is exempt (camera is above, looking down)."""
+    from scene.manifest import load_manifest
+
+    for manifest in ("jupiter_to_stargate.json", "jupiter_juno_approach.json"):
+        g = load_manifest(ROOT / "scene" / "examples" / manifest)
+        for shot in g.shots:
+            if shot.renderer != "volumetric_gas_giant":
+                continue
+            cam = shot.camera
+            sd = shot.params.get("sun_dir")
+            if sd is None:
+                continue
+            # Pole shots are special-cased: camera is above the planet
+            # so the lit-side check on Z is replaced by a Y check.
+            if "polar" in (shot.motion_hint or "") or "pole" in shot.id:
+                assert sd[1] > 0.3, (
+                    f"{manifest} shot {shot.id}: polar shot needs sun overhead"
+                )
+                continue
+            # General case: camera looks toward +Z, so sun_dir.z must be
+            # negative for the visible hemisphere to be lit.
+            cam_fwd_z = cam.target[2] - cam.position[2]
+            if cam_fwd_z > 0:
+                assert sd[2] < 0, (
+                    f"{manifest} shot {shot.id}: sun_dir.z={sd[2]} would "
+                    f"light the back of the planet"
+                )
+    print("ok: test_sun_dir_illuminates_camera_facing_hemisphere")
+
+
 def main() -> int:
     test_band_table_covers_full_range_no_gaps()
     test_fbm_is_finite_and_zero_centered()
@@ -142,6 +179,7 @@ def main() -> int:
     test_polar_cyclones_brighten_high_latitudes()
     test_equatorial_jet_drift_dominates()
     test_example_manifest_loads()
+    test_sun_dir_illuminates_camera_facing_hemisphere()
     print("\nall volumetric gas-giant tests passed")
     return 0
 

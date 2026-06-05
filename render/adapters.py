@@ -128,15 +128,15 @@ class VolumetricGasGiantRenderer(Renderer):
         super().__init__(shot)
         _ensure_taichi()
         from render.volumetric_gas_giant import VolumetricGasGiantEngine
-        side = max(self.width, self.height)
         self._engine = VolumetricGasGiantEngine(
-            res=side,
+            width=self.width,
+            height=self.height,
             tex_height=int(shot.params.get("tex_height", 512)),
             tex_width=int(shot.params.get("tex_width", 1024)),
             atm_thickness=float(shot.params.get("atm_thickness", 0.025)),
             march_steps=int(shot.params.get("march_steps", 24)),
             samples=int(shot.params.get("samples", 2)),
-            sun_dir=tuple(shot.params.get("sun_dir", (0.707, 0.0, 0.707))),
+            sun_dir=tuple(shot.params.get("sun_dir", (-0.55, 0.18, -0.81))),
             grs_lon=float(shot.params.get("grs_lon", 100.0)),
             seed=int(shot.params.get("seed", shot.seed)),
         )
@@ -154,8 +154,7 @@ class VolumetricGasGiantRenderer(Renderer):
             fov_deg=float(camera.fov_deg),
         )
         self._engine.render(float(frame_idx) * 0.05)
-        img = self._engine.pixels.to_numpy().astype(np.float32)
-        return _resize_to(img, self.height, self.width)
+        return self._engine.pixels.to_numpy().astype(np.float32)
 
 
 @register_renderer("gas_giant")
