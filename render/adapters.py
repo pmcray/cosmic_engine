@@ -157,6 +157,82 @@ class VolumetricGasGiantRenderer(Renderer):
         return self._engine.pixels.to_numpy().astype(np.float32)
 
 
+@register_renderer("spiral_galaxy")
+class SpiralGalaxyRenderer(Renderer):
+    """Volumetric spiral-galaxy renderer (M51 / Whirlpool target).
+
+    Pure procedural: no baked texture, so detail resolves at every zoom
+    level via the footprint-aware noise toolkit in `render/noise.py`.
+
+    Expected params (all optional, sensible defaults):
+        R_disk, h_disk           : disk radial / vertical scales
+        R_bulge, bulge_axis_ratio: bulge half-light radius and oblateness
+        R_halo, h_halo           : extended halo ellipsoid
+        n_arms                   : 2 = grand-design (M51), 4 = multi-arm
+        pitch_deg                : log-spiral pitch (M51 ~ 12)
+        arm_strength, arm_phase, arm_width
+        dust_strength, dust_freq
+        hii_threshold, hii_freq
+        companion_pos            : (x, y, z) offset in galaxy radii
+        companion_mass_ratio     : 0.0 = isolated, 0.5 = M51-like
+        bridge_strength          : tidal bridge density
+        inclination_deg          : 0 = face-on
+        doppler_strength, doppler_sign
+        march_steps, samples
+        seed
+        push_in_factor           : 1.0 = no zoom; >1 zooms in over the shot
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.spiral_galaxy import SpiralGalaxyEngine
+        p = shot.params
+        self._engine = SpiralGalaxyEngine(
+            width=self.width,
+            height=self.height,
+            R_disk=float(p.get("R_disk", 1.0)),
+            h_disk=float(p.get("h_disk", 0.05)),
+            R_bulge=float(p.get("R_bulge", 0.18)),
+            bulge_axis_ratio=float(p.get("bulge_axis_ratio", 0.85)),
+            R_halo=float(p.get("R_halo", 1.6)),
+            h_halo=float(p.get("h_halo", 0.45)),
+            n_arms=int(p.get("n_arms", 2)),
+            pitch_deg=float(p.get("pitch_deg", 12.0)),
+            arm_strength=float(p.get("arm_strength", 0.85)),
+            arm_phase=float(p.get("arm_phase", 0.0)),
+            arm_width=float(p.get("arm_width", 0.45)),
+            dust_strength=float(p.get("dust_strength", 2.2)),
+            dust_freq=float(p.get("dust_freq", 10.0)),
+            hii_threshold=float(p.get("hii_threshold", 0.22)),
+            hii_freq=float(p.get("hii_freq", 14.0)),
+            companion_pos=tuple(p.get("companion_pos", (1.05, 0.05, 0.35))),
+            companion_mass_ratio=float(p.get("companion_mass_ratio", 0.5)),
+            bridge_strength=float(p.get("bridge_strength", 0.6)),
+            inclination_deg=float(p.get("inclination_deg", 20.0)),
+            doppler_strength=float(p.get("doppler_strength", 0.06)),
+            doppler_sign=float(p.get("doppler_sign", 1.0)),
+            march_steps=int(p.get("march_steps", 72)),
+            samples=int(p.get("samples", 2)),
+            seed=int(p.get("seed", shot.seed)),
+        )
+        self._push_in = float(p.get("push_in_factor", 1.0))
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pos = np.asarray(camera.position, dtype=np.float32)
+        if self._push_in != 1.0:
+            scale = 1.0 / (1.0 + (self._push_in - 1.0) * t)
+            pos = pos * scale
+        self._engine.set_camera(
+            position=tuple(pos.tolist()),
+            target=tuple(camera.target),
+            up_world=tuple(camera.up),
+            fov_deg=float(camera.fov_deg),
+        )
+        self._engine.render(float(frame_idx) * 0.05)
+        return self._engine.pixels.to_numpy().astype(np.float32)
+
+
 @register_renderer("gas_giant")
 class GasGiantRenderer(Renderer):
     """Wraps `render.camera.SphereCamera.render_gas_giant` with a fluid sim.
