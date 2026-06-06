@@ -37,6 +37,13 @@ import math
 
 import numpy as np
 
+from render.noise import (
+    np_fbm_2d as _fbm_2d,
+    value_noise_3d,
+    fbm_3d_footprint,
+    domain_warp_fbm,
+)
+
 try:
     import taichi as ti
     _HAS_TAICHI = True
@@ -72,39 +79,6 @@ LAYER_COLORS = (
 
 
 # --- Numpy baking pipeline -----------------------------------------------
-
-def _fbm_2d(shape, octaves=5, persistence=0.55, seed=0):
-    """Cheap bilinear-upsampled fractional Brownian motion."""
-    H, W = shape
-    rng = np.random.default_rng(seed)
-    val = np.zeros((H, W), dtype=np.float32)
-    amp = 1.0
-    ny, nx = 4, 8
-    for _ in range(octaves):
-        n = rng.standard_normal((ny, nx)).astype(np.float32)
-        yi = np.linspace(0, ny - 1, H).astype(np.float32)
-        xi = np.linspace(0, nx - 1, W).astype(np.float32)
-        y0 = yi.astype(np.int32)
-        x0 = xi.astype(np.int32)
-        y1 = np.minimum(y0 + 1, ny - 1)
-        x1 = np.minimum(x0 + 1, nx - 1)
-        fy = (yi - y0).astype(np.float32)[:, None]
-        fx = (xi - x0).astype(np.float32)[None, :]
-        n00 = n[y0[:, None], x0[None, :]]
-        n01 = n[y0[:, None], x1[None, :]]
-        n10 = n[y1[:, None], x0[None, :]]
-        n11 = n[y1[:, None], x1[None, :]]
-        lerp = (n00 * (1 - fx) + n01 * fx) * (1 - fy) + (n10 * (1 - fx) + n11 * fx) * fy
-        val += lerp * amp
-        amp *= persistence
-        ny *= 2
-        nx *= 2
-    val -= val.mean()
-    s = val.std()
-    if s > 0:
-        val /= s
-    return val.astype(np.float32)
-
 
 def _ellipse_mask(lat_grid, lon_grid, c_lat, c_lon, r_lat, r_lon, intensity=1.0, falloff=2.0):
     dlon = ((lon_grid - c_lon + 180.0) % 360.0) - 180.0
@@ -473,73 +447,11 @@ else:
 
     # ---- Procedural detail synthesis -----------------------------------
     # The baked surface_color carries low-frequency structure (bands,
-    # named storms, K-H rolls). High-frequency cloud filigree is
-    # synthesized procedurally in world space here, so as the camera
-    # zooms in, additional fBM octaves resolve rather than the texels
-    # of a fixed-resolution texture becoming visible. Footprint-aware
-    # octave weighting fades any octave whose period is smaller than
-    # the screen-space pixel footprint, keeping the output alias-free
-    # at every zoom level.
-
-    @ti.func
-    def _hash3(self, p):
-        h = ti.sin(p[0] * 127.1 + p[1] * 311.7 + p[2] * 74.7) * 43758.5453
-        return h - ti.floor(h)
-
-    @ti.func
-    def _value_noise_3d(self, p):
-        pi = ti.Vector([ti.floor(p[0]), ti.floor(p[1]), ti.floor(p[2])])
-        pf = p - pi
-        u = pf * pf * (3.0 - 2.0 * pf)
-
-        n000 = self._hash3(pi)
-        n100 = self._hash3(pi + ti.Vector([1.0, 0.0, 0.0]))
-        n010 = self._hash3(pi + ti.Vector([0.0, 1.0, 0.0]))
-        n110 = self._hash3(pi + ti.Vector([1.0, 1.0, 0.0]))
-        n001 = self._hash3(pi + ti.Vector([0.0, 0.0, 1.0]))
-        n101 = self._hash3(pi + ti.Vector([1.0, 0.0, 1.0]))
-        n011 = self._hash3(pi + ti.Vector([0.0, 1.0, 1.0]))
-        n111 = self._hash3(pi + ti.Vector([1.0, 1.0, 1.0]))
-
-        nx00 = n000 * (1.0 - u[0]) + n100 * u[0]
-        nx10 = n010 * (1.0 - u[0]) + n110 * u[0]
-        nx01 = n001 * (1.0 - u[0]) + n101 * u[0]
-        nx11 = n011 * (1.0 - u[0]) + n111 * u[0]
-
-        nxy0 = nx00 * (1.0 - u[1]) + nx10 * u[1]
-        nxy1 = nx01 * (1.0 - u[1]) + nx11 * u[1]
-
-        return nxy0 * (1.0 - u[2]) + nxy1 * u[2]
-
-    @ti.func
-    def _detail_fbm(self, p, footprint):
-        # 6 octaves starting at 40 cycles around the planet. Each octave's
-        # contribution is gated by a smoothstep: octaves whose period is
-        # below ~2 * footprint (Nyquist limit) are faded out so the
-        # detail never aliases regardless of zoom.
-        val = 0.0
-        amp = 1.0
-        freq = 40.0
-        for _ in range(6):
-            period = 1.0 / freq
-            x = ti.max(0.0, ti.min(1.0, footprint / period - 0.4))
-            weight = 1.0 - x * x * (3.0 - 2.0 * x)
-            val += (self._value_noise_3d(p * freq) - 0.5) * amp * weight
-            amp *= 0.55
-            freq *= 2.1
-        return val
-
-    @ti.func
-    def _surface_detail(self, p_surf, footprint):
-        # Low-freq domain warp creates eddy-like swirls in the high-freq
-        # detail. Two passes: warp the sample point, then fBM at the
-        # warped position.
-        warp_p = p_surf * 12.0
-        wx = self._value_noise_3d(warp_p) - 0.5
-        wy = self._value_noise_3d(warp_p + ti.Vector([7.3, 0.0, 0.0])) - 0.5
-        wz = self._value_noise_3d(warp_p + ti.Vector([0.0, 13.7, 0.0])) - 0.5
-        warp_vec = ti.Vector([wx, wy, wz]) * 0.35
-        return self._detail_fbm(p_surf + warp_vec, footprint)
+    # named storms, K-H rolls). High-frequency cloud filigree comes
+    # from render.noise.domain_warp_fbm at render time, footprint-gated
+    # so detail resolves under zoom without aliasing. The noise toolkit
+    # is shared with every renderer in the engine so this property
+    # holds system-wide.
 
     @ti.kernel
     def render_kernel(self, t: ti.f32):
@@ -659,7 +571,8 @@ else:
                             view_n_planet = ti.max(0.05, -rd.dot(n_surf))
                             pixel_size = (2.0 * fov_scale * t_end) / float(self.height)
                             footprint = pixel_size / view_n_planet
-                            detail = self._surface_detail(p_surf, footprint)
+                            detail = domain_warp_fbm(p_surf, footprint,
+                                                     40.0, 6, 12.0, 0.35)
                             # Brightness modulation reads as 3D cloud relief;
                             # additive warm tint adds chromatic eddy variation.
                             warm = ti.Vector([0.10, 0.06, 0.03])
