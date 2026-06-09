@@ -157,6 +157,66 @@ class VolumetricGasGiantRenderer(Renderer):
         return self._engine.pixels.to_numpy().astype(np.float32)
 
 
+@register_renderer("diffuse_nebula")
+class DiffuseNebulaRenderer(Renderer):
+    """Volumetric diffuse-nebula renderer with six topology classes.
+
+    Expected params:
+        topology         : "pillars" | "crab" | "helix" | "veil"
+                            | "orion" | "pleiades"
+        R_bound          : bounding-sphere radius (default 1.5)
+        intensity        : emission multiplier (default 1.0)
+        dust_strength    : extinction multiplier (default 1.0)
+        detail_strength  : procedural-detail amplitude (default 1.0)
+        erosion_height, erosion_decay     : pillars-specific
+        R_shell, shell_thickness          : crab/veil-specific
+        R_torus, r_torus                  : helix-specific
+        march_steps      : ray-march sample count (default 80)
+        samples          : AA samples per pixel (default 2)
+        seed             : int (default shot.seed)
+        push_in_factor   : cinematic zoom (default 1.0)
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.diffuse_nebula import DiffuseNebulaEngine
+        p = shot.params
+        self._engine = DiffuseNebulaEngine(
+            width=self.width,
+            height=self.height,
+            topology=str(p.get("topology", "pillars")),
+            R_bound=float(p.get("R_bound", 1.5)),
+            intensity=float(p.get("intensity", 1.0)),
+            dust_strength=float(p.get("dust_strength", 1.0)),
+            detail_strength=float(p.get("detail_strength", 1.0)),
+            erosion_height=float(p.get("erosion_height", 0.2)),
+            erosion_decay=float(p.get("erosion_decay", 2.5)),
+            R_shell=float(p.get("R_shell", 1.0)),
+            shell_thickness=float(p.get("shell_thickness", 0.18)),
+            R_torus=float(p.get("R_torus", 0.7)),
+            r_torus=float(p.get("r_torus", 0.18)),
+            march_steps=int(p.get("march_steps", 80)),
+            samples=int(p.get("samples", 2)),
+            seed=int(p.get("seed", shot.seed)),
+        )
+        self._push_in = float(p.get("push_in_factor", 1.0))
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pos = np.asarray(camera.position, dtype=np.float32)
+        if self._push_in != 1.0:
+            scale = 1.0 / (1.0 + (self._push_in - 1.0) * t)
+            pos = pos * scale
+        self._engine.set_camera(
+            position=tuple(pos.tolist()),
+            target=tuple(camera.target),
+            up_world=tuple(camera.up),
+            fov_deg=float(camera.fov_deg),
+        )
+        self._engine.render(float(frame_idx) * 0.05)
+        return self._engine.pixels.to_numpy().astype(np.float32)
+
+
 @register_renderer("spiral_galaxy")
 class SpiralGalaxyRenderer(Renderer):
     """Volumetric spiral-galaxy renderer (M51 / Whirlpool target).
