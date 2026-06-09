@@ -157,6 +157,111 @@ class VolumetricGasGiantRenderer(Renderer):
         return self._engine.pixels.to_numpy().astype(np.float32)
 
 
+@register_renderer("saturn_class")
+class SaturnClassRenderer(Renderer):
+    """Saturn-class ringed gas-giant renderer: paler banded atmosphere,
+    hexagonal north-polar vortex, full ring system (C, B, A + Cassini
+    Division + Encke Gap + F ringlet), and bi-directional ring/planet
+    shadow casting.
+
+    Expected params:
+        atm_thickness, march_steps, samples, sun_dir,
+        hex_enable, hex_lat, hex_amp,
+        rings_enable, ring_brightness, ring_shadows_enable,
+        seed, push_in_factor
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.saturn_class import SaturnClassEngine
+        p = shot.params
+        self._engine = SaturnClassEngine(
+            width=self.width,
+            height=self.height,
+            tex_height=int(p.get("tex_height", 512)),
+            tex_width=int(p.get("tex_width", 1024)),
+            atm_thickness=float(p.get("atm_thickness", 0.05)),
+            march_steps=int(p.get("march_steps", 28)),
+            samples=int(p.get("samples", 2)),
+            sun_dir=tuple(p.get("sun_dir", (-0.55, 0.18, -0.81))),
+            hex_enable=int(p.get("hex_enable", 1)),
+            hex_lat=float(p.get("hex_lat", 78.0)),
+            hex_amp=float(p.get("hex_amp", 0.45)),
+            rings_enable=int(p.get("rings_enable", 1)),
+            ring_brightness=float(p.get("ring_brightness", 1.0)),
+            ring_shadows_enable=int(p.get("ring_shadows_enable", 1)),
+            seed=int(p.get("seed", shot.seed)),
+        )
+        self._push_in = float(p.get("push_in_factor", 1.0))
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pos = np.asarray(camera.position, dtype=np.float32)
+        if self._push_in != 1.0:
+            scale = 1.0 / (1.0 + (self._push_in - 1.0) * t)
+            pos = pos * scale
+        self._engine.set_camera(
+            position=tuple(pos.tolist()),
+            target=tuple(camera.target),
+            up_world=tuple(camera.up),
+            fov_deg=float(camera.fov_deg),
+        )
+        self._engine.render(float(frame_idx) * 0.05)
+        return self._engine.pixels.to_numpy().astype(np.float32)
+
+
+@register_renderer("stellar_surface")
+class StellarSurfaceRenderer(Renderer):
+    """Sun-like / red-dwarf / brown-dwarf / O-star surface with
+    limb darkening, two-scale Worley granulation, parametric sunspots,
+    Halpha prominences, and a corona shell.
+
+    Expected params:
+        T_eff           : effective blackbody temperature (default 5800)
+        limb_u          : linear limb-darkening coefficient (default 0.6)
+        granule_scale   : Worley frequency for granules (default 22)
+        supergranule_scale : Worley frequency for supergranules (4.5)
+        corona_thickness : float (default 0.04)
+        sunspots        : list of [lat, lon, radius_deg, darkness]
+        prominences     : list of [lat, lon, height, length_deg]
+        samples, seed, push_in_factor
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.stellar_surface import StellarSurfaceEngine
+        p = shot.params
+        self._engine = StellarSurfaceEngine(
+            width=self.width,
+            height=self.height,
+            T_eff=float(p.get("T_eff", 5800.0)),
+            limb_u=float(p.get("limb_u", 0.6)),
+            granule_scale=float(p.get("granule_scale", 22.0)),
+            supergranule_scale=float(p.get("supergranule_scale", 4.5)),
+            corona_thickness=float(p.get("corona_thickness", 0.04)),
+            sunspots=tuple(tuple(s) for s in p.get("sunspots", ())),
+            prominences=tuple(tuple(s) for s in p.get("prominences", ())),
+            samples=int(p.get("samples", 2)),
+            seed=int(p.get("seed", shot.seed)),
+        )
+        self._push_in = float(p.get("push_in_factor", 1.0))
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pos = np.asarray(camera.position, dtype=np.float32)
+        if self._push_in != 1.0:
+            scale = 1.0 / (1.0 + (self._push_in - 1.0) * t)
+            pos = pos * scale
+        self._engine.set_camera(
+            position=tuple(pos.tolist()),
+            target=tuple(camera.target),
+            up_world=tuple(camera.up),
+            fov_deg=float(camera.fov_deg),
+        )
+        self._engine.render(float(frame_idx) * 0.05)
+        return self._engine.pixels.to_numpy().astype(np.float32)
+
+
 @register_renderer("diffuse_nebula")
 class DiffuseNebulaRenderer(Renderer):
     """Volumetric diffuse-nebula renderer with six topology classes.
