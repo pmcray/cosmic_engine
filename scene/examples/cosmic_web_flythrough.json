@@ -1,0 +1,126 @@
+{
+  "title": "cosmic_web_flythrough",
+  "schema_version": 1,
+  "shots": [
+    {
+      "id": "wide_field",
+      "renderer": "cosmic_web",
+      "params": {
+        "box_size_mpc": 3000.0,
+        "grid_dim": 128,
+        "n_synth_particles": 150000,
+        "n_synth_clusters": 480,
+        "synth_seed": 42,
+        "march_steps": 128,
+        "samples": 2,
+        "emission_gain": 4.5,
+        "extinction_strength": 0.10,
+        "background_gain": 0.5,
+        "push_in_factor": 1.0
+      },
+      "camera": {
+        "position": [0.0, 0.0, -2200.0],
+        "target": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 55.0,
+        "path_to": {
+          "position": [220.0, 80.0, -1700.0],
+          "target": [50.0, 0.0, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 55.0
+        }
+      },
+      "palette": { "name": "trumbull_2001", "intensity": 1.0 },
+      "duration_frames": 96,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 42,
+      "motion_hint": "drift_in"
+    },
+    {
+      "id": "filament_skim",
+      "renderer": "cosmic_web",
+      "params": {
+        "box_size_mpc": 3000.0,
+        "grid_dim": 128,
+        "n_synth_particles": 150000,
+        "n_synth_clusters": 480,
+        "synth_seed": 42,
+        "march_steps": 144,
+        "samples": 2,
+        "emission_gain": 5.5,
+        "extinction_strength": 0.18,
+        "background_gain": 0.4
+      },
+      "camera": {
+        "position": [-800.0, 200.0, -400.0],
+        "target": [400.0, -150.0, 600.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 48.0,
+        "path_to": {
+          "position": [-200.0, 100.0, -100.0],
+          "target": [800.0, -100.0, 800.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 50.0
+        }
+      },
+      "palette": { "name": "jwst_nircam", "intensity": 1.0 },
+      "duration_frames": 80,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 42,
+      "motion_hint": "fly_through"
+    },
+    {
+      "id": "deep_redshift",
+      "renderer": "cosmic_web",
+      "params": {
+        "box_size_mpc": 3000.0,
+        "grid_dim": 128,
+        "n_synth_particles": 150000,
+        "n_synth_clusters": 480,
+        "synth_seed": 42,
+        "march_steps": 160,
+        "samples": 2,
+        "emission_gain": 6.0,
+        "extinction_strength": 0.22,
+        "background_gain": 0.3,
+        "push_in_factor": 1.6
+      },
+      "camera": {
+        "position": [0.0, 0.0, -1200.0],
+        "target": [0.0, 0.0, 1200.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 40.0,
+        "path_to": {
+          "position": [50.0, 30.0, 200.0],
+          "target": [50.0, 30.0, 1400.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 35.0
+        }
+      },
+      "palette": { "name": "hubble_sii_ha_oiii", "intensity": 1.0 },
+      "duration_frames": 96,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 42,
+      "motion_hint": "deep_dive"
+    }
+  ],
+  "transitions": [
+    {
+      "from_shot": "wide_field",
+      "to_shot": "filament_skim",
+      "kind": "crossfade",
+      "duration_frames": 18,
+      "params": { "histogram_strength": 0.65, "smoothstep": true }
+    },
+    {
+      "from_shot": "filament_skim",
+      "to_shot": "deep_redshift",
+      "kind": "crossfade",
+      "duration_frames": 16,
+      "params": { "histogram_strength": 0.55, "smoothstep": true }
+    }
+  ]
+}

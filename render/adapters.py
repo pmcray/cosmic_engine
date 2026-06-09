@@ -157,6 +157,72 @@ class VolumetricGasGiantRenderer(Renderer):
         return self._engine.pixels.to_numpy().astype(np.float32)
 
 
+@register_renderer("cosmic_web")
+class CosmicWebRenderer(Renderer):
+    """Cosmic-web point-cloud fly-through. Renders the DESI tracer-class
+    distribution (or a procedural fallback when no catalog is downloaded)
+    splatted into a 3D emission + density grid, then volumetric ray-march
+    with footprint-AA fine detail.
+
+    Expected params:
+        catalog_path     : str | null, .npz with positions/tracer/magnitudes
+                           (if null, falls back to the procedural synth)
+        box_size_mpc     : box half-extent (default 3000)
+        grid_dim         : splat-grid resolution (default 128)
+        n_synth_particles, n_synth_clusters, synth_seed
+        march_steps      : ray-march sample count (default 128)
+        samples          : AA samples (default 2)
+        emission_gain    : multiplier on volumetric emission (default 4)
+        extinction_strength
+        background_gain
+        push_in_factor   : cinematic zoom (default 1.0)
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.cosmic_web import CosmicWebEngine
+        from render.cosmic_pipeline import load_desi_npz
+        p = shot.params
+        positions = tracer = magnitudes = None
+        catalog_path = p.get("catalog_path", None)
+        if catalog_path:
+            positions, tracer, magnitudes, _ = load_desi_npz(catalog_path)
+        self._engine = CosmicWebEngine(
+            width=self.width,
+            height=self.height,
+            positions=positions,
+            tracer=tracer,
+            magnitudes=magnitudes,
+            box_size_mpc=float(p.get("box_size_mpc", 3000.0)),
+            grid_dim=int(p.get("grid_dim", 128)),
+            n_synth_particles=int(p.get("n_synth_particles", 120_000)),
+            n_synth_clusters=int(p.get("n_synth_clusters", 400)),
+            synth_seed=int(p.get("synth_seed", shot.seed)),
+            march_steps=int(p.get("march_steps", 128)),
+            samples=int(p.get("samples", 2)),
+            emission_gain=float(p.get("emission_gain", 4.0)),
+            extinction_strength=float(p.get("extinction_strength", 0.15)),
+            background_gain=float(p.get("background_gain", 1.0)),
+            seed=int(p.get("seed", shot.seed)),
+        )
+        self._push_in = float(p.get("push_in_factor", 1.0))
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pos = np.asarray(camera.position, dtype=np.float32)
+        if self._push_in != 1.0:
+            scale = 1.0 / (1.0 + (self._push_in - 1.0) * t)
+            pos = pos * scale
+        self._engine.set_camera(
+            position=tuple(pos.tolist()),
+            target=tuple(camera.target),
+            up_world=tuple(camera.up),
+            fov_deg=float(camera.fov_deg),
+        )
+        self._engine.render(float(frame_idx) * 0.05)
+        return self._engine.pixels.to_numpy().astype(np.float32)
+
+
 @register_renderer("saturn_class")
 class SaturnClassRenderer(Renderer):
     """Saturn-class ringed gas-giant renderer: paler banded atmosphere,
