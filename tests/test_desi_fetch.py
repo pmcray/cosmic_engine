@@ -83,6 +83,29 @@ def test_cli_synth_reproducible_with_same_seed() -> None:
     print("ok: test_cli_synth_reproducible_with_same_seed")
 
 
+def test_list_subcommand_prints_known_urls(capsys=None) -> None:
+    import io
+    import contextlib
+    from render.desi_fetch import KNOWN_DESI_URLS, main
+
+    assert len(KNOWN_DESI_URLS) >= 8
+    # Every URL should start with the LBNL public host.
+    for url in KNOWN_DESI_URLS.values():
+        assert url.startswith("https://data.desi.lbl.gov/public/")
+    # All four tracer names must appear in the labels.
+    for tracer in ("BGS", "LRG", "ELG", "QSO"):
+        assert any(tracer in k for k in KNOWN_DESI_URLS)
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = main(["list"])
+    assert rc == 0
+    out = buf.getvalue()
+    for label in KNOWN_DESI_URLS:
+        assert label in out
+    print("ok: test_list_subcommand_prints_known_urls")
+
+
 def test_download_mode_errors_cleanly_without_astropy_or_url() -> None:
     """Download mode should refuse gracefully when astropy isn't
     available, OR when --url is missing entirely."""
@@ -115,6 +138,7 @@ def main() -> int:
     test_synth_cli_writes_valid_npz()
     test_synth_output_is_cosmic_web_loadable()
     test_cli_synth_reproducible_with_same_seed()
+    test_list_subcommand_prints_known_urls()
     test_download_mode_errors_cleanly_without_astropy_or_url()
     print("\nall desi_fetch tests passed")
     return 0

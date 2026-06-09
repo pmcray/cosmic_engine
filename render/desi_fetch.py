@@ -1,6 +1,6 @@
 """DESI catalog → cosmic_web .npz converter CLI.
 
-Two modes:
+Three modes:
 
   synth: generate a procedural cosmic-web catalog. No network or
          astropy needed. Useful for local development and CI.
@@ -8,14 +8,19 @@ Two modes:
     python -m render.desi_fetch synth --out catalogs/web.npz \\
         --n-particles 200000 --n-clusters 600 --box 3000 --seed 42
 
+  list: print the known public DESI EDR / DR1 LSS clustering catalog
+         URLs hosted at LBNL so you don't have to remember them.
+
+    python -m render.desi_fetch list
+
   download: pull a public DESI FITS catalog from a URL, convert the
          RA/Dec/z columns to comoving Cartesian using the user-
          configurable w0wa cosmology, and emit the npz the
          cosmic_web renderer consumes. Requires astropy.
 
     python -m render.desi_fetch download --out catalogs/bgs.npz \\
-        --url https://data.desi.lbl.gov/public/edr/vac/edr/lss/v1.0/LSScats/BGS_BRIGHT-21.5_NGC_clustering.dat.fits \\
         --tracer BGS --max-rows 200000 \\
+        --url https://data.desi.lbl.gov/public/edr/vac/edr/lss/v2.0/LSScats/BGS_BRIGHT-21.5_NGC_clustering.dat.fits \\
         --H0 67.4 --omega-m 0.315 --w0 -0.838 --wa -0.62
 
 The output .npz format is what render.cosmic_web.CosmicWebEngine
@@ -47,6 +52,43 @@ from render.cosmic_pipeline import (
     radec_z_to_cartesian,
     synthesize_cosmic_web,
 )
+
+
+# Known public DESI catalog URLs hosted at LBNL.
+# Confirmed against https://data.desi.lbl.gov/public/edr/ and DR1
+# index listings. Files are large (multi-GB); use --max-rows to
+# subsample for proxy renders.
+KNOWN_DESI_URLS = {
+    # Early Data Release (EDR) v2.0 clustering catalogs.
+    "EDR_BGS_NGC": "https://data.desi.lbl.gov/public/edr/vac/edr/lss/v2.0/LSScats/BGS_BRIGHT-21.5_NGC_clustering.dat.fits",
+    "EDR_BGS_SGC": "https://data.desi.lbl.gov/public/edr/vac/edr/lss/v2.0/LSScats/BGS_BRIGHT-21.5_SGC_clustering.dat.fits",
+    "EDR_LRG_NGC": "https://data.desi.lbl.gov/public/edr/vac/edr/lss/v2.0/LSScats/LRG_NGC_clustering.dat.fits",
+    "EDR_LRG_SGC": "https://data.desi.lbl.gov/public/edr/vac/edr/lss/v2.0/LSScats/LRG_SGC_clustering.dat.fits",
+    "EDR_ELG_NGC": "https://data.desi.lbl.gov/public/edr/vac/edr/lss/v2.0/LSScats/ELG_LOPnotqso_NGC_clustering.dat.fits",
+    "EDR_ELG_SGC": "https://data.desi.lbl.gov/public/edr/vac/edr/lss/v2.0/LSScats/ELG_LOPnotqso_SGC_clustering.dat.fits",
+    "EDR_QSO_NGC": "https://data.desi.lbl.gov/public/edr/vac/edr/lss/v2.0/LSScats/QSO_NGC_clustering.dat.fits",
+    "EDR_QSO_SGC": "https://data.desi.lbl.gov/public/edr/vac/edr/lss/v2.0/LSScats/QSO_SGC_clustering.dat.fits",
+    # DR1 LSS catalogs (release pending public listing; same URL
+    # convention applies). Update once DR2 is published in April 2026.
+    "DR1_BGS_NGC": "https://data.desi.lbl.gov/public/dr1/vac/dr1/lss/iron/LSScats/v1/BGS_BRIGHT-21.5_NGC_clustering.dat.fits",
+    "DR1_LRG_NGC": "https://data.desi.lbl.gov/public/dr1/vac/dr1/lss/iron/LSScats/v1/LRG_NGC_clustering.dat.fits",
+    "DR1_ELG_NGC": "https://data.desi.lbl.gov/public/dr1/vac/dr1/lss/iron/LSScats/v1/ELG_LOPnotqso_NGC_clustering.dat.fits",
+    "DR1_QSO_NGC": "https://data.desi.lbl.gov/public/dr1/vac/dr1/lss/iron/LSScats/v1/QSO_NGC_clustering.dat.fits",
+}
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    print("Known public DESI LSS clustering catalog URLs:\n")
+    width = max(len(k) for k in KNOWN_DESI_URLS) + 2
+    for label, url in KNOWN_DESI_URLS.items():
+        print(f"  {label:<{width}} {url}")
+    print(
+        "\nPick one and pass it to `download --url <URL>`. Default cosmology "
+        "(w0=-0.838, wa=-0.62) is the DESI DR2 best fit; override with "
+        "--H0, --omega-m, --w0, --wa.\n"
+        "\nFor large catalogs use --max-rows to subsample (e.g. 200000)."
+    )
+    return 0
 
 
 def cmd_synth(args: argparse.Namespace) -> int:
@@ -192,6 +234,9 @@ def main(argv: list[str] | None = None) -> int:
                          help="box edge in Mpc")
     p_synth.add_argument("--seed", type=int, default=0)
     p_synth.set_defaults(func=cmd_synth)
+
+    p_list = sub.add_parser("list", help="print known public DESI catalog URLs")
+    p_list.set_defaults(func=cmd_list)
 
     p_dl = sub.add_parser("download", help="convert a FITS catalog to .npz")
     p_dl.add_argument("--out", required=True, help="output .npz path")
