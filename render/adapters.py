@@ -157,6 +157,135 @@ class VolumetricGasGiantRenderer(Renderer):
         return self._engine.pixels.to_numpy().astype(np.float32)
 
 
+@register_renderer("terrain")
+class TerrainRenderer(Renderer):
+    """Heightmap terrain via ridged fBM with sun, shadow, haze, snow line,
+    optional water plane. Procedural detail at every scale.
+
+    Expected params: terrain_amplitude, terrain_freq, octaves, snow_line,
+    water_level, water_enable, sun_dir, haze_strength, max_dist,
+    march_steps, samples, push_in_factor, seed.
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.terrain import TerrainEngine
+        p = shot.params
+        self._engine = TerrainEngine(
+            width=self.width,
+            height=self.height,
+            terrain_amplitude=float(p.get("terrain_amplitude", 1.4)),
+            terrain_freq=float(p.get("terrain_freq", 0.04)),
+            octaves=int(p.get("octaves", 8)),
+            snow_line=float(p.get("snow_line", 0.85)),
+            water_level=float(p.get("water_level", -0.15)),
+            water_enable=int(p.get("water_enable", 1)),
+            sun_dir=tuple(p.get("sun_dir", (0.45, 0.55, -0.7))),
+            haze_strength=float(p.get("haze_strength", 0.6)),
+            max_dist=float(p.get("max_dist", 80.0)),
+            march_steps=int(p.get("march_steps", 140)),
+            samples=int(p.get("samples", 1)),
+            seed=int(p.get("seed", shot.seed)),
+        )
+        self._push_in = float(p.get("push_in_factor", 1.0))
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pos = np.asarray(camera.position, dtype=np.float32)
+        if self._push_in != 1.0:
+            scale = 1.0 / (1.0 + (self._push_in - 1.0) * t)
+            pos = pos * scale
+        self._engine.set_camera(
+            position=tuple(pos.tolist()),
+            target=tuple(camera.target),
+            up_world=tuple(camera.up),
+            fov_deg=float(camera.fov_deg),
+        )
+        self._engine.render(float(frame_idx) * 0.05)
+        return self._engine.pixels.to_numpy().astype(np.float32)
+
+
+@register_renderer("ca_creatures")
+class CACreaturesRenderer(Renderer):
+    """Lenia-style continuous cellular-automata creatures.
+
+    Expected params: grid_size; per-species A_R, A_kernel_mu, A_kernel_sigma,
+    A_growth_mu, A_growth_sigma; same for B. Also dt, substeps_per_frame,
+    warmup_steps, samples, seed.
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.ca_creatures import CACreaturesEngine
+        p = shot.params
+        self._engine = CACreaturesEngine(
+            width=self.width,
+            height=self.height,
+            grid_size=int(p.get("grid_size", 256)),
+            A_R=int(p.get("A_R", 13)),
+            A_kernel_mu=float(p.get("A_kernel_mu", 0.5)),
+            A_kernel_sigma=float(p.get("A_kernel_sigma", 0.15)),
+            A_growth_mu=float(p.get("A_growth_mu", 0.15)),
+            A_growth_sigma=float(p.get("A_growth_sigma", 0.015)),
+            B_R=int(p.get("B_R", 24)),
+            B_kernel_mu=float(p.get("B_kernel_mu", 0.55)),
+            B_kernel_sigma=float(p.get("B_kernel_sigma", 0.12)),
+            B_growth_mu=float(p.get("B_growth_mu", 0.12)),
+            B_growth_sigma=float(p.get("B_growth_sigma", 0.020)),
+            dt=float(p.get("dt", 0.1)),
+            substeps_per_frame=int(p.get("substeps_per_frame", 2)),
+            samples=int(p.get("samples", 1)),
+            seed=int(p.get("seed", shot.seed)),
+            warmup_steps=int(p.get("warmup_steps", 80)),
+        )
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        # CA uses 2D pan/zoom from camera.position[0:2] (pan_x, pan_y)
+        # and camera.position[2] negated as a zoom proxy.
+        cp = camera.position
+        zoom = max(0.1, 1.0 + cp[2] * 0.5)
+        self._engine.set_camera(pan_x=float(cp[0]), pan_y=float(cp[1]), zoom=zoom)
+        self._engine.render(float(frame_idx) * 0.05)
+        return self._engine.pixels.to_numpy().astype(np.float32)
+
+
+@register_renderer("exoplanet_atmosphere")
+class ExoplanetAtmosphereRenderer(Renderer):
+    """Exoplanet variants: hot_jupiter / mini_neptune / brown_dwarf."""
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.exoplanet_atmosphere import ExoplanetAtmosphereEngine
+        p = shot.params
+        self._engine = ExoplanetAtmosphereEngine(
+            width=self.width,
+            height=self.height,
+            topology=str(p.get("topology", "hot_jupiter")),
+            atm_thickness=float(p.get("atm_thickness", 0.07)),
+            march_steps=int(p.get("march_steps", 30)),
+            samples=int(p.get("samples", 2)),
+            sun_dir=tuple(p.get("sun_dir", (-0.55, 0.18, -0.81))),
+            seed=int(p.get("seed", shot.seed)),
+        )
+        self._push_in = float(p.get("push_in_factor", 1.0))
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pos = np.asarray(camera.position, dtype=np.float32)
+        if self._push_in != 1.0:
+            scale = 1.0 / (1.0 + (self._push_in - 1.0) * t)
+            pos = pos * scale
+        self._engine.set_camera(
+            position=tuple(pos.tolist()),
+            target=tuple(camera.target),
+            up_world=tuple(camera.up),
+            fov_deg=float(camera.fov_deg),
+        )
+        self._engine.render(float(frame_idx) * 0.05)
+        return self._engine.pixels.to_numpy().astype(np.float32)
+
+
 @register_renderer("cosmic_web")
 class CosmicWebRenderer(Renderer):
     """Cosmic-web point-cloud fly-through. Renders the DESI tracer-class

@@ -1,0 +1,113 @@
+{
+  "title": "exoplanet_trinity",
+  "schema_version": 1,
+  "shots": [
+    {
+      "id": "hot_jupiter",
+      "renderer": "exoplanet_atmosphere",
+      "params": {
+        "topology": "hot_jupiter",
+        "atm_thickness": 0.10,
+        "march_steps": 32,
+        "samples": 2,
+        "sun_dir": [-0.55, 0.18, -0.81],
+        "seed": 51,
+        "push_in_factor": 1.35
+      },
+      "camera": {
+        "position": [0.0, 0.25, -3.6],
+        "target": [0.0, -0.1, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 36.0,
+        "path_to": {
+          "position": [0.15, 0.05, -2.5],
+          "target": [0.0, -0.15, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 30.0
+        }
+      },
+      "palette": { "name": "trumbull_2001", "intensity": 1.0 },
+      "duration_frames": 96,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 51,
+      "motion_hint": "push_in"
+    },
+    {
+      "id": "mini_neptune",
+      "renderer": "exoplanet_atmosphere",
+      "params": {
+        "topology": "mini_neptune",
+        "atm_thickness": 0.12,
+        "march_steps": 30,
+        "samples": 2,
+        "sun_dir": [-0.6, 0.15, -0.78],
+        "seed": 51
+      },
+      "camera": {
+        "position": [0.0, 0.0, -3.0],
+        "target": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 34.0,
+        "path_to": {
+          "position": [0.0, 0.0, -2.5],
+          "target": [0.0, 0.0, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 30.0
+        }
+      },
+      "palette": { "name": "jwst_nircam", "intensity": 1.0 },
+      "duration_frames": 72,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 51,
+      "motion_hint": "drift"
+    },
+    {
+      "id": "brown_dwarf",
+      "renderer": "exoplanet_atmosphere",
+      "params": {
+        "topology": "brown_dwarf",
+        "atm_thickness": 0.08,
+        "march_steps": 34,
+        "samples": 2,
+        "sun_dir": [-0.50, 0.08, -0.86],
+        "seed": 51
+      },
+      "camera": {
+        "position": [0.0, 0.1, -3.0],
+        "target": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 32.0,
+        "path_to": {
+          "position": [0.1, 0.05, -2.4],
+          "target": [0.0, 0.0, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 30.0
+        }
+      },
+      "palette": { "name": "trumbull_2001", "intensity": 1.0 },
+      "duration_frames": 80,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 51,
+      "motion_hint": "drift"
+    }
+  ],
+  "transitions": [
+    {
+      "from_shot": "hot_jupiter",
+      "to_shot": "mini_neptune",
+      "kind": "crossfade",
+      "duration_frames": 16,
+      "params": { "histogram_strength": 0.6, "smoothstep": true }
+    },
+    {
+      "from_shot": "mini_neptune",
+      "to_shot": "brown_dwarf",
+      "kind": "crossfade",
+      "duration_frames": 14,
+      "params": { "histogram_strength": 0.5, "smoothstep": true }
+    }
+  ]
+}

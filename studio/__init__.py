@@ -25,6 +25,13 @@ from .producer import (
     transition_kind,
 )
 from .session import Attempt, Session
+from .critic_vision_local import (
+    LocalVLMCritic,
+    build_shot_prompt,
+    composite_from_scores,
+    keyframes_for_shot,
+    parse_vlm_response,
+)
 
 __all__ = [
     "ArtifactStore",
@@ -45,4 +52,9 @@ __all__ = [
     "shot_palette",
     "shot_seed",
     "transition_kind",
+    "LocalVLMCritic",
+    "build_shot_prompt",
+    "composite_from_scores",
+    "keyframes_for_shot",
+    "parse_vlm_response",
 ]
