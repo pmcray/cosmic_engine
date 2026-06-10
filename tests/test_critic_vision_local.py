@@ -161,6 +161,30 @@ def test_critic_protocol_compatible_with_metrics_critic() -> None:
     print("ok: test_critic_protocol_compatible_with_metrics_critic")
 
 
+def test_evaluate_artifact_rejects_none_and_missing_manifest() -> None:
+    """evaluate_artifact must fail with a clear message on None (the
+    'no artifact rendered yet' case) and on a directory without a
+    manifest -- both happen before any model load, so they're CPU-safe."""
+    from studio.critic_vision_local import LocalVLMCritic
+
+    c = LocalVLMCritic()
+    try:
+        c.evaluate_artifact(None)
+    except ValueError as e:
+        assert "ArtifactStore" in str(e)
+    else:
+        raise AssertionError("expected ValueError for None artifact")
+
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            c.evaluate_artifact(d)
+        except FileNotFoundError as e:
+            assert "manifest.json" in str(e)
+        else:
+            raise AssertionError("expected FileNotFoundError for empty dir")
+    print("ok: test_evaluate_artifact_rejects_none_and_missing_manifest")
+
+
 def test_critic_constructor_no_model_load() -> None:
     """Constructor must not load the model; that happens on first use."""
     from studio.critic_vision_local import LocalVLMCritic
@@ -183,6 +207,7 @@ def main() -> int:
     test_keyframes_for_shot_picks_evenly_spaced()
     test_keyframes_returns_empty_when_dir_missing()
     test_critic_protocol_compatible_with_metrics_critic()
+    test_evaluate_artifact_rejects_none_and_missing_manifest()
     test_critic_constructor_no_model_load()
     print("\nall LocalVLMCritic tests passed")
     return 0

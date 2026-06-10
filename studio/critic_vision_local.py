@@ -256,7 +256,19 @@ class LocalVLMCritic:
         return _scores_to_shot_metrics(shot, scores, n_keyframes=len(image_paths))
 
     def evaluate_artifact(self, artifact_dir: Path | str) -> MetricSet:
+        if artifact_dir is None:
+            raise ValueError(
+                "evaluate_artifact received None. No artifact exists yet -- "
+                "render something through an ArtifactStore first, e.g.:\n"
+                "  store = ArtifactStore('renders')\n"
+                "  GraphRunner(graph, '_unused.mp4', artifact_store=store).run()"
+            )
         artifact_dir = Path(artifact_dir)
+        if not (artifact_dir / "manifest.json").exists():
+            raise FileNotFoundError(
+                f"no manifest.json under {artifact_dir} -- is this a render "
+                "artifact directory produced by ArtifactStore?"
+            )
         graph = load_manifest(artifact_dir / "manifest.json")
         shots: dict[str, ShotMetrics] = {}
         for shot in graph.shots:
