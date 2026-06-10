@@ -22,8 +22,6 @@ Camera convention is 2D: position (x, z) parameterizes pan; the y
 component controls zoom (larger y = wider field of view).
 """
 
-from __future__ import annotations
-
 import math
 
 import numpy as np

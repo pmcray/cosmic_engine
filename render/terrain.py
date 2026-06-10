@@ -18,8 +18,6 @@ Coord convention: world Y is "up"; camera typically stands a bit
 above the average ground, looking toward the horizon.
 """
 
-from __future__ import annotations
-
 import math
 
 import numpy as np

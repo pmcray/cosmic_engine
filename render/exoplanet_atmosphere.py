@@ -14,8 +14,6 @@ texture beyond the band-color lookup, all detail via render/noise.py
 footprint-gated primitives. A single kernel branches on a topology id.
 """
 
-from __future__ import annotations
-
 import math
 
 import numpy as np

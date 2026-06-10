@@ -33,8 +33,6 @@ Tracer-class palette comes from `data.cosmic_pipeline.TRACER_COLORS`:
 BGS orange / LRG red / ELG teal / QSO violet, per the user's spec.
 """
 
-from __future__ import annotations
-
 import math
 
 import numpy as np
