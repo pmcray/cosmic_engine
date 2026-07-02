@@ -10,6 +10,10 @@ class FluidEngine:
         self.vorticity_strength = vorticity_strength
         self.planet_type = planet_type.lower()
         self.has_pearls = 0
+        # < 1.0 suppresses meridional (north-south) flow each step, keeping
+        # the circulation zonally constrained like a real gas giant. 1.0
+        # leaves the solver's behaviour unchanged.
+        self.meridional_damping = 1.0
         import random
         self.seed_offset = random.random() * 10000.0
 
@@ -295,6 +299,11 @@ class FluidEngine:
         for i, j in f1:
             f1[i, j] = f2[i, j]
 
+    @ti.kernel
+    def damp_meridional(self, factor: float):
+        for i, j in self.velocity:
+            self.velocity[i, j][1] *= factor
+
     def step(self, frame: int):
         self.inject_zonal_jets(frame)
         self.compute_vorticity()
@@ -306,5 +315,7 @@ class FluidEngine:
             self.solve_pressure()
             self.copy_fields(self.pressure, self.new_pressure)
         self.subtract_gradient()
+        if self.meridional_damping < 1.0:
+            self.damp_meridional(self.meridional_damping)
         self.advect(self.dye, self.new_dye, self.velocity, 0.995)
         self.copy_fields(self.dye, self.new_dye)

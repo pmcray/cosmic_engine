@@ -2,6 +2,10 @@
 
 A high-performance Python-based CLI tool and library for Parametric, Stochastic, and Context-Sensitive L-Systems with 3D geometry output.
 
+> **Cinematic sequences:** for the offline '2001'-style sequence renderer
+> (Jupiter approach → Stargate corridor → black hole, up to UHD), see
+> [ODYSSEY_README.md](ODYSSEY_README.md) / `odyssey_director.py`.
+
 ## Features
 
 - **Parametric L-Systems**: Support for numerical parameters and arithmetic expressions

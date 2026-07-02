@@ -40,7 +40,16 @@ class BlackHole:
     @ti.func
     def render(self, ro, rd, time, mass):
         """
-        Integrates the light path in the curved spacetime.
+        Integrates the light path in the curved spacetime with the original
+        march budget (100 steps of 0.1 -- adequate for close-in framing).
+        """
+        return self.render_n(ro, rd, time, mass, 100, 0.1)
+
+    @ti.func
+    def render_n(self, ro, rd, time, mass, max_steps: ti.i32, dt: float):
+        """
+        As render(), but with a caller-chosen march budget. Wide framings
+        (camera outside the accretion disk) need the longer path length.
         """
         rs = 2.0 * mass
         r_isco = 3.0 * rs
@@ -50,24 +59,25 @@ class BlackHole:
 
         curr_p = ro
         curr_v = rd
-        
+
         total_color = ti.Vector([0.0, 0.0, 0.0])
         transmittance = 1.0
-        
-        # Adaptive stepping
-        dt = 0.1
-        max_steps = 100
-        
+
+        # Far-field bound must lie beyond the camera itself, or rays from a
+        # wide framing would 'escape' on their first step
+        r0 = ti.sqrt(ro[0]**2 + ro[1]**2 + ro[2]**2)
+        escape_r = ti.max(15.0 * mass + 5.0, r0 * 1.05)
+
         for i in range(max_steps):
             r2 = curr_p[0]**2 + curr_p[1]**2 + curr_p[2]**2
             r = ti.sqrt(r2)
-            
+
             if r < rs * 1.01:
                 # Crossed the Event Horizon - perfectly black
                 transmittance = 0.0
                 break
-                
-            if r > 15.0 * mass + 5.0:
+
+            if r > escape_r:
                 # Escaped to far field
                 break
                 
@@ -77,22 +87,29 @@ class BlackHole:
             accel = -curr_p * force_mag
             
             # Update velocity and position (Symplectic Euler-like)
+            prev_p = curr_p
             curr_v += accel * dt
             curr_v /= ti.sqrt(curr_v[0]**2 + curr_v[1]**2 + curr_v[2]**2) # Maintain speed of light
             curr_p += curr_v * dt
-            
-            # 2. Accretion Disk Intersection (simplified as a thin plane)
-            if ti.abs(curr_p[1]) < 0.05: # Thin disk on XZ plane
-                dist_xz = ti.sqrt(curr_p[0]**2 + curr_p[2]**2)
+
+            # 2. Accretion Disk Intersection (thin plane at y=0). Detected
+            # by the sign change of y across the step -- a fixed |y| window
+            # misses crossings at coarse step sizes, producing stair-step
+            # artifacts on the disk edge.
+            if prev_p[1] * curr_p[1] < 0.0:
+                # Interpolate to the actual plane crossing
+                frac = prev_p[1] / (prev_p[1] - curr_p[1] + 1e-9)
+                hit_p = prev_p + (curr_p - prev_p) * frac
+                dist_xz = ti.sqrt(hit_p[0]**2 + hit_p[2]**2)
                 if disk_inner < dist_xz < disk_outer:
                     disk_col = self.get_disk_color(dist_xz, time, mass, disk_inner, disk_outer)
-                    
+
                     # Relativistic Beaming (simplified)
                     # One side is brighter because it moves towards the observer
                     # Assuming counter-clockwise rotation
-                    velocity_dot_view = -curr_p[2] / (dist_xz + 1e-6) # Z-component of tangential velocity
+                    velocity_dot_view = -hit_p[2] / (dist_xz + 1e-6) # Z-component of tangential velocity
                     beaming = 1.0 + velocity_dot_view * 0.8
-                    
+
                     total_color += disk_col * beaming * transmittance
                     transmittance *= 0.1 # Disk is somewhat opaque
             

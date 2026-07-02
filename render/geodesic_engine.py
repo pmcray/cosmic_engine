@@ -9,10 +9,12 @@ class GeodesicEngine:
     treating light paths as resonant trajectories along the pi-lattice rather
     than Euclidean rays. Implements Zero-Point Harmonic Collapse (ZPHC).
     """
-    def __init__(self, render_res=1024, samples=4):
+    def __init__(self, render_res=1024, samples=4, render_w=None, render_h=None):
         self.render_res = render_res
+        self.render_w = render_w if render_w is not None else render_res
+        self.render_h = render_h if render_h is not None else render_res
         self.samples = samples
-        self.final_output = ti.Vector.field(3, dtype=float, shape=(self.render_res, self.render_res))
+        self.final_output = ti.Vector.field(3, dtype=float, shape=(self.render_w, self.render_h))
         
         # ZPHC Observer state (0.0 = unobserved proxy, 1.0 = fully collapsed reality)
         self.observer_attention = ti.field(dtype=float, shape=())
@@ -116,10 +118,10 @@ class GeodesicEngine:
             for k in range(self.samples):
                 offset_x = ti.random() - 0.5
                 offset_y = ti.random() - 0.5
-                
-                # Standardize UV coordinates from -1.0 to 1.0
-                u = (float(i) + offset_x) / self.render_res * 2.0 - 1.0
-                v = (float(j) + offset_y) / self.render_res * 2.0 - 1.0
+
+                # Standardize UV coordinates from -1.0 to 1.0 (aspect-corrected)
+                u = ((float(i) + offset_x) / self.render_w * 2.0 - 1.0) * (self.render_w / self.render_h)
+                v = (float(j) + offset_y) / self.render_h * 2.0 - 1.0
                 
                 accumulated_color += self.trace_geodesic(u, v, time)
                 
