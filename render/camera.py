@@ -1,4 +1,5 @@
 import taichi as ti
+from render.detrng import rand_centered, tick, S_AA_X, S_AA_Y, S_GRAIN
 import math
 import numpy as np
 
@@ -431,8 +432,8 @@ class SphereCamera:
 
             # Sub-pixel Jittering for Anti-Aliasing
             for k in range(self.samples):
-                offset_x = ti.random() - 0.5
-                offset_y = ti.random() - 0.5
+                offset_x = rand_centered(i, j, k, tick(time) + S_AA_X)
+                offset_y = rand_centered(i, j, k, tick(time) + S_AA_Y)
                 # Aspect-corrected UV: vertical FOV fixed, horizontal widened
                 u = ((float(i) + offset_x) / self.render_w * 2.0 - 1.0) * (self.render_w / self.render_h)
                 v = (float(j) + offset_y) / self.render_h * 2.0 - 1.0
@@ -450,7 +451,7 @@ class SphereCamera:
             color = (final_color * (a * final_color + b)) / (final_color * (c * final_color + d) + e)
             
             # Spacecraft Sensor Noise
-            noise = (ti.random() - 0.5) * 0.04
+            noise = rand_centered(i, j, tick(time), S_GRAIN) * 0.04
             
             self.final_output[i, j] = color + ti.Vector([noise, noise, noise])
 
@@ -462,8 +463,8 @@ class SphereCamera:
             accumulated_color = ti.Vector([0.0, 0.0, 0.0])
             
             for k in range(self.samples):
-                offset_x = ti.random() - 0.5
-                offset_y = ti.random() - 0.5
+                offset_x = rand_centered(i, j, k, tick(time) + S_AA_X)
+                offset_y = rand_centered(i, j, k, tick(time) + S_AA_Y)
                 u = ((float(i) + offset_x) / self.render_w * 2.0 - 1.0) * (self.render_w / self.render_h)
                 v = (float(j) + offset_y) / self.render_h * 2.0 - 1.0
 
@@ -495,7 +496,7 @@ class SphereCamera:
             color = (final_color * (a * final_color + b)) / (final_color * (c * final_color + d) + e)
             
             # Spacecraft Sensor Noise
-            noise = (ti.random() - 0.5) * 0.04
+            noise = rand_centered(i, j, tick(time), S_GRAIN) * 0.04
             self.final_output[i, j] = color + ti.Vector([noise, noise, noise])
 
     def get_image_data(self):

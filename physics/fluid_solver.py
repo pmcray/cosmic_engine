@@ -1,9 +1,10 @@
 import taichi as ti
+from render.detrng import rand01, rand_centered, S_DYE_HALO, S_DYE_SPOT, S_DYE_BANDS, S_STORM_GATE, S_STORM_VX, S_STORM_VY, S_POLAR_VX, S_POLAR_VY
 import math
 
 @ti.data_oriented
 class FluidEngine:
-    def __init__(self, res=512, dt=0.03, jacobi_iters=40, vorticity_strength=2.8, planet_type="jupiter"):
+    def __init__(self, res=512, dt=0.03, jacobi_iters=40, vorticity_strength=2.8, planet_type="jupiter", seed=None):
         self.RES = res
         self.dt = dt
         self.jacobi_iters = jacobi_iters
@@ -14,8 +15,12 @@ class FluidEngine:
         # the circulation zonally constrained like a real gas giant. 1.0
         # leaves the solver's behaviour unchanged.
         self.meridional_damping = 1.0
+        # With an explicit seed the engine is fully self-contained and
+        # deterministic; seed=None keeps the legacy behaviour of drawing
+        # from the (possibly globally seeded) module-level random.
         import random
-        self.seed_offset = random.random() * 10000.0
+        rng = random.Random(seed) if seed is not None else random
+        self.seed_offset = rng.random() * 10000.0
 
         # --- PLANETARY PROFILES ---
         if self.planet_type == "venus":
@@ -64,12 +69,12 @@ class FluidEngine:
 
         else: # Default: Jupiter
             self.jacobi_iters = 80
-            self.vorticity_strength = 8.0 + random.uniform(-2.0, 2.0)
-            self.band_freq = 14.0 + random.uniform(-3.0, 3.0)
-            self.wind_mult = 1.8 + random.uniform(-0.4, 0.4)
-            self.shear_mult = 5.0 + random.uniform(-1.0, 1.5)
-            self.has_spot = 1 if random.random() > 0.3 else 0
-            self.has_pearls = 1 if random.random() > 0.3 else 0
+            self.vorticity_strength = 8.0 + rng.uniform(-2.0, 2.0)
+            self.band_freq = 14.0 + rng.uniform(-3.0, 3.0)
+            self.wind_mult = 1.8 + rng.uniform(-0.4, 0.4)
+            self.shear_mult = 5.0 + rng.uniform(-1.0, 1.5)
+            self.has_spot = 1 if rng.random() > 0.3 else 0
+            self.has_pearls = 1 if rng.random() > 0.3 else 0
             
             # Jupiter Palette Details (Zones = Light, Belts = Dark)
             self.color_zone_1 = ti.Vector([0.90, 0.90, 0.88]) # Pearl white (Equatorial Zone)
@@ -79,7 +84,7 @@ class FluidEngine:
             
             self.color_3 = ti.Vector([0.15, 0.35, 0.65]) # Deep Juno Polar Blue
             self.color_storm = ti.Vector([1.0, 1.0, 1.0]) # White
-            self.color_spot = ti.Vector([0.70 + random.uniform(-0.1, 0.1), 0.15 + random.uniform(-0.05, 0.05), 0.05]) # Terracotta Red
+            self.color_spot = ti.Vector([0.70 + rng.uniform(-0.1, 0.1), 0.15 + rng.uniform(-0.05, 0.05), 0.05]) # Terracotta Red
 
         # Core Fields
         self.velocity = ti.Vector.field(2, dtype=float, shape=(self.RES, self.RES))
@@ -218,15 +223,15 @@ class FluidEngine:
 
                     # Pale halo around the terracotta core
                     if dist_elliptical > spot_radius * 0.75:
-                        if ti.random() > 0.8:
-                            self.dye[i, j] = self.color_zone_1 * 1.1 
-                    elif ti.random() > 0.6: 
+                        if rand01(i, j, frame, S_DYE_HALO) > 0.8:
+                            self.dye[i, j] = self.color_zone_1 * 1.1
+                    elif rand01(i, j, frame, S_DYE_SPOT) > 0.6:
                         self.dye[i, j] = self.color_spot
             
             # 3. Strict Zonal Coloring and Polar Caps
             polar_mask = ti.abs(lat - 0.5) * 2.0 
             
-            if ti.random() > 0.92: # Continual repainting of the zonal bands
+            if rand01(i, j, frame, S_DYE_BANDS) > 0.92: # Continual repainting of the zonal bands
                 if polar_mask > 0.65:
                     self.dye[i, j] = self.color_3
                 else:
@@ -248,10 +253,10 @@ class FluidEngine:
                     
             # 4. Explosive Storm Pop-ups
             storm_trigger = ti.sin(lon * 40.0 + time * 2.0) * ti.cos(lat * 30.0) + turb * 0.2
-            if storm_trigger > 1.05 and ti.random() > 0.8:
+            if storm_trigger > 1.05 and rand01(i, j, frame, S_STORM_GATE) > 0.8:
                 self.dye[i, j] = self.color_storm
-                self.velocity[i, j][0] += (ti.random() - 0.5) * 800.0 * self.shear_mult
-                self.velocity[i, j][1] += (ti.random() - 0.5) * 800.0 * self.shear_mult
+                self.velocity[i, j][0] += rand_centered(i, j, frame, S_STORM_VX) * 800.0 * self.shear_mult
+                self.velocity[i, j][1] += rand_centered(i, j, frame, S_STORM_VY) * 800.0 * self.shear_mult
 
             # 5. String of Pearls (Jupiter-specific)
             if self.has_pearls == 1:
@@ -291,8 +296,8 @@ class FluidEngine:
                 polar_vortex_trigger = ti.sin(lon * 80.0) * ti.cos(lat * 120.0 + time) + turb
                 if polar_vortex_trigger > 1.5:
                     self.dye[i, j] = self.color_3 * 1.2 # Bright blue centers
-                    self.velocity[i, j][0] += (ti.random() - 0.5) * 1200.0 * self.shear_mult
-                    self.velocity[i, j][1] += (ti.random() - 0.5) * 1200.0 * self.shear_mult
+                    self.velocity[i, j][0] += rand_centered(i, j, frame, S_POLAR_VX) * 1200.0 * self.shear_mult
+                    self.velocity[i, j][1] += rand_centered(i, j, frame, S_POLAR_VY) * 1200.0 * self.shear_mult
 
     @ti.kernel
     def copy_fields(self, f1: ti.template(), f2: ti.template()):

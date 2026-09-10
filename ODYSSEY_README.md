@@ -64,12 +64,12 @@ Notes on chunking:
   chunk fast-forwards the simulation through the frames before its
   `--start-frame` (cheap relative to rendering — and skipped entirely once
   the planet is off screen after Act I).
-- **Determinism**: `--seed` fixes both the Python RNG (planet parameters) and
-  Taichi's RNG. Kernel-level `ti.random()` streams can still differ slightly
-  between runs, which perturbs sub-pixel AA jitter and the stochastic dye
-  repainting; if you see a visible seam at a chunk boundary, place boundaries
-  at the act cuts (frames at 0.55 and 0.85 of the timeline) or re-render the
-  chunk with a small overlap.
+- **Determinism**: `--seed` fixes the planet parameters, and every
+  stochastic effect in the kernels (sub-pixel AA jitter, film grain, dye
+  repainting, storm impulses) draws from the counter-based hash RNG in
+  `render/detrng.py`, keyed on pixel/sample/frame — so any frame renders
+  bit-identically on any run, chunk boundary, or thread schedule. Chunks
+  can be split anywhere.
 
 ## Presets
 

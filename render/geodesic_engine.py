@@ -1,4 +1,5 @@
 import taichi as ti
+from render.detrng import rand_centered, tick, S_AA_X, S_AA_Y
 import math
 from physics.black_hole import BlackHole
 
@@ -116,8 +117,8 @@ class GeodesicEngine:
             accumulated_color = ti.Vector([0.0, 0.0, 0.0])
             
             for k in range(self.samples):
-                offset_x = ti.random() - 0.5
-                offset_y = ti.random() - 0.5
+                offset_x = rand_centered(i, j, k, tick(time) + S_AA_X)
+                offset_y = rand_centered(i, j, k, tick(time) + S_AA_Y)
 
                 # Standardize UV coordinates from -1.0 to 1.0 (aspect-corrected)
                 u = ((float(i) + offset_x) / self.render_w * 2.0 - 1.0) * (self.render_w / self.render_h)

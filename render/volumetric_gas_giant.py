@@ -50,6 +50,7 @@ try:
 except Exception:  # pragma: no cover - GPU-only dep
     ti = None
     _HAS_TAICHI = False
+from render.detrng import rand_centered, tick, S_AA_X, S_AA_Y
 
 
 # --- Static configuration tables -----------------------------------------
@@ -478,8 +479,8 @@ else:
 
             for s in range(self.samples):
                 # Stratified jitter.
-                jx = (ti.random() - 0.5) / self.samples
-                jy = (ti.random() - 0.5) / self.samples
+                jx = rand_centered(i, j, s, tick(t) + S_AA_X) / self.samples
+                jy = rand_centered(i, j, s, tick(t) + S_AA_Y) / self.samples
                 # u in [-1, 1] across width, v in [-1, 1] across height.
                 # Multiply u by aspect so a unit angular step right matches
                 # a unit angular step up -- keeps the planet circular at any

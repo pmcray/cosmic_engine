@@ -685,7 +685,8 @@ class OdysseyJovianApproachRenderer(Renderer):
         p = shot.params
         fluid_res = int(p.get("fluid_res", 256))
         self._fluid = FluidEngine(res=fluid_res, dt=0.004,
-                                  planet_type=p.get("planet_type", "jupiter"))
+                                  planet_type=p.get("planet_type", "jupiter"),
+                                  seed=int(p.get("seed", shot.seed)))
         self._fluid.vorticity_strength = float(p.get("vorticity_strength", 2.0))
         self._fluid.band_freq = float(p.get("band_freq", 12.0))
         self._fluid.wind_mult = float(p.get("wind_mult", 1.5))

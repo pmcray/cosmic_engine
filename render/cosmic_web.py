@@ -49,6 +49,7 @@ try:
 except Exception:  # pragma: no cover
     ti = None
     _HAS_TAICHI = False
+from render.detrng import rand_centered, tick, S_AA_X, S_AA_Y
 
 
 def splat_particles_to_grid(
@@ -355,8 +356,8 @@ else:
             for i, j in self.pixels:
                 accum = ti.Vector([0.0, 0.0, 0.0])
                 for s in range(self.samples):
-                    jx = (ti.random() - 0.5) / self.samples
-                    jy = (ti.random() - 0.5) / self.samples
+                    jx = rand_centered(i, j, s, tick(t) + S_AA_X) / self.samples
+                    jy = rand_centered(i, j, s, tick(t) + S_AA_Y) / self.samples
                     u = ((float(j) + 0.5 + jx) / self.width) * 2.0 - 1.0
                     v = ((float(i) + 0.5 + jy) / self.height) * 2.0 - 1.0
                     v = -v

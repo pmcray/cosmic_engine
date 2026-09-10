@@ -1,4 +1,5 @@
 import taichi as ti
+from render.detrng import rand01, tick, S_SPARKLE
 import math
 
 @ti.data_oriented
@@ -120,7 +121,10 @@ class BlackHole:
         if mass < 0.1:
             hawking = ti.Vector([0.8, 0.9, 1.0]) * hawking_temp * 0.01
             # Add some "sparkle"
-            sparkle = ti.random() * ti.exp(- (ti.sqrt(ro[0]**2 + ro[1]**2 + ro[2]**2) - rs)**2 * 10.0)
+            sparkle = rand01(ti.cast(ro[0] * 1024.0, ti.i32),
+                             ti.cast(ro[1] * 1024.0, ti.i32),
+                             ti.cast(ro[2] * 1024.0, ti.i32) ^ tick(time),
+                             S_SPARKLE) * ti.exp(- (ti.sqrt(ro[0]**2 + ro[1]**2 + ro[2]**2) - rs)**2 * 10.0)
             total_color += hawking * sparkle
             
         return total_color

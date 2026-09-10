@@ -51,6 +51,7 @@ try:
 except Exception:  # pragma: no cover - GPU-only dep
     ti = None
     _HAS_TAICHI = False
+from render.detrng import rand_centered, tick, S_AA_X, S_AA_Y
 
 
 # Sersic n=4 normalization coefficient. exp(-b_n * (x^(1/n) - 1)).
@@ -370,8 +371,8 @@ else:
                 accum = ti.Vector([0.0, 0.0, 0.0])
 
                 for s in range(self.samples):
-                    jx = (ti.random() - 0.5) / self.samples
-                    jy = (ti.random() - 0.5) / self.samples
+                    jx = rand_centered(i, j, s, tick(t) + S_AA_X) / self.samples
+                    jy = rand_centered(i, j, s, tick(t) + S_AA_Y) / self.samples
                     u = ((float(j) + 0.5 + jx) / self.width) * 2.0 - 1.0
                     v = ((float(i) + 0.5 + jy) / self.height) * 2.0 - 1.0
                     v = -v

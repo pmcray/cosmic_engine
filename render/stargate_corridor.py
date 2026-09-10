@@ -1,4 +1,5 @@
 import taichi as ti
+from render.detrng import rand_centered, tick, S_AA_X, S_AA_Y, S_GRAIN
 import math
 
 
@@ -152,9 +153,9 @@ class StargateCorridor:
         aspect = float(self.render_w) / float(self.render_h)
         for i, j in self.pixels:
             accumulated = ti.Vector([0.0, 0.0, 0.0])
-            for _ in range(self.samples):
-                ox = ti.random() - 0.5
-                oy = ti.random() - 0.5
+            for k in range(self.samples):
+                ox = rand_centered(i, j, k, tick(time) + S_AA_X)
+                oy = rand_centered(i, j, k, tick(time) + S_AA_Y)
                 u = ((float(i) + ox) / self.render_w * 2.0 - 1.0) * aspect
                 v = (float(j) + oy) / self.render_h * 2.0 - 1.0
 
@@ -175,5 +176,5 @@ class StargateCorridor:
             color = (color * (a * color + b)) / (color * (c * color + d) + e)
 
             # Film grain consistent with the rest of the sequence
-            noise = (ti.random() - 0.5) * 0.04
+            noise = rand_centered(i, j, tick(time), S_GRAIN) * 0.04
             self.pixels[i, j] = color + ti.Vector([noise, noise, noise])

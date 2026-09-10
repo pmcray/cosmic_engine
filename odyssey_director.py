@@ -85,7 +85,8 @@ class OdysseyDirector:
         # tuned for violent interactive storms; at cinematic pacing those
         # impulses shred the cloud bands into noise. These overrides must be
         # set before the first step() so the kernels compile with them.
-        self.fluid = FluidEngine(res=fluid_res, dt=0.004, planet_type="jupiter")
+        self.fluid = FluidEngine(res=fluid_res, dt=0.004, planet_type="jupiter",
+                                 seed=seed)
         self.fluid.vorticity_strength = 2.0
         self.fluid.band_freq = 12.0
         self.fluid.wind_mult = 1.5
