@@ -494,6 +494,73 @@ def t_ca_creatures(rng: random.Random):
     return ("ca_creatures", params, cam, "zoom_in", "trumbull_2001")
 
 
+def t_odyssey_jovian(rng: random.Random):
+    """Act I of the Odyssey Director as a phrase: fluid-simulated Jovian
+    approach with the sinking sun. The renderer drives its own camera
+    choreography, so the manifest camera is a plain default."""
+    params = {
+        "fluid_res": 256,
+        "samples": 2,
+        "prewarm_steps": _ri(rng, 80, 140),
+        "vorticity_strength": _r(rng, 1.6, 2.4),
+        "band_freq": _r(rng, 10.0, 14.0),
+        "wind_mult": _r(rng, 1.2, 1.8),
+        "pan_total": _r(rng, 1.8, 2.6),
+        "roll_max": _r(rng, 0.4, 0.75),
+        "sun_azimuth_sweep": _r(rng, 1.2, 2.0),
+        "flash": 0,  # the white-out belongs to the tunnel boundary, not mid-voyage
+        "seed": _ri(rng, 0, 999_999),
+    }
+    return ("odyssey_jovian_approach", params, Camera(), "push_in", "trumbull_2001")
+
+
+def t_odyssey_jovian_flash(rng: random.Random):
+    """Act I variant that keeps the terminal white-out — the classic cut
+    into a tunnel phase."""
+    renderer, params, cam, motion, palette = t_odyssey_jovian(rng)
+    params["flash"] = 1
+    return (renderer, params, cam, motion, palette)
+
+
+def t_stargate_corridor(rng: random.Random):
+    """Act II of the Odyssey Director: widescreen slit-scan corridor with
+    colour epochs and the horizontal-to-vertical tumble."""
+    params = {
+        "samples": 2,
+        "tumble_start": _r(rng, 0.35, 0.55),
+        "tumble_width": _r(rng, 0.15, 0.30),
+        "entry_flash": _r(rng, 3.0, 6.0),
+        "flash_decay": _r(rng, 20.0, 40.0),
+        "seed": _ri(rng, 0, 999_999),
+    }
+    return ("stargate_corridor", params, _cam_tunnel_fly(rng), "tunnel", "trumbull_2001")
+
+
+def t_odyssey_infinite(rng: random.Random):
+    """Act III of the Odyssey Director: lensed black-hole infall with the
+    mass ramping. Mid-voyage variant — no fade to black."""
+    params = {
+        "samples": 2,
+        "bh_steps": rng.choice([260, 300, 320]),
+        "bh_dt": 0.08,
+        "mass_start": _r(rng, 0.35, 0.45),
+        "mass_ramp": _r(rng, 0.18, 0.30),
+        "dist_start": _r(rng, 6.0, 7.0),
+        "dist_fall": _r(rng, 4.0, 5.0),
+        "fade": 0,
+        "seed": _ri(rng, 0, 999_999),
+    }
+    return ("odyssey_infinite", params, Camera(), "approach", "trumbull_2001")
+
+
+def t_odyssey_infinite_finale(rng: random.Random):
+    """Act III variant that keeps the fade to black across the horizon —
+    meant for the resolution phase's closing shot."""
+    renderer, params, cam, motion, palette = t_odyssey_infinite(rng)
+    params["fade"] = 1
+    return (renderer, params, cam, motion, palette)
+
+
 # ============================================================
 # Phases
 # ============================================================
@@ -514,14 +581,14 @@ PHASES: tuple[Phase, ...] = (
         name="approach",
         duration_frac=0.12,
         n_shots=(3, 4),
-        templates=(t_jovian_approach, t_saturnian_drift, t_stellar_sun, t_exoplanet),
+        templates=(t_jovian_approach, t_odyssey_jovian, t_saturnian_drift, t_stellar_sun, t_exoplanet),
         palette_pool=("trumbull_2001", "nfb_universe_1960"),
     ),
     Phase(
         name="threshold",
         duration_frac=0.10,
         n_shots=(3, 4),
-        templates=(t_kerr_disc, t_jovian_grs, t_stellar_m, t_nebula),
+        templates=(t_kerr_disc, t_odyssey_infinite, t_jovian_grs, t_stellar_m, t_nebula),
         palette_pool=("trumbull_2001", "hubble_sii_ha_oiii"),
         transition_to_next="slitscan",
     ),
@@ -529,7 +596,7 @@ PHASES: tuple[Phase, ...] = (
         name="tunnel",
         duration_frac=0.10,
         n_shots=(2, 3),
-        templates=(t_slitscan_tunnel, t_kerr_disc, t_slitscan_tunnel),
+        templates=(t_slitscan_tunnel, t_stargate_corridor, t_kerr_disc, t_stargate_corridor),
         palette_pool=("trumbull_2001",),
         transition_kind="hard_cut",
         transition_to_next="slitscan",
@@ -566,7 +633,7 @@ PHASES: tuple[Phase, ...] = (
         name="resolution",
         duration_frac=0.12,
         n_shots=(3, 4),
-        templates=(t_saturnian_drift, t_spiral_face_on, t_nebula, t_jovian_approach),
+        templates=(t_saturnian_drift, t_spiral_face_on, t_nebula, t_jovian_approach, t_odyssey_infinite_finale),
         palette_pool=("nfb_universe_1960", "trumbull_2001"),
     ),
 )

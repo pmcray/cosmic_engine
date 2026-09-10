@@ -641,6 +641,201 @@ class GasGiantRenderer(Renderer):
         return _resize_to(img, self.height, self.width)
 
 
+# ---- Odyssey Director acts as graph shots ----
+#
+# The three acts of odyssey_director.py, wrapped so the voyage composer
+# can splice them into any sequence. The choreography curves live in
+# render.odyssey_acts (pure Python, CPU-testable); these classes bind
+# them to the Taichi engines. SphereCamera / StargateCorridor fields are
+# (x, y) bottom-up, so frames are reoriented to the graph's (H, W, 3)
+# top-down contract.
+
+
+def _xy_to_rows(img: np.ndarray) -> np.ndarray:
+    """(W, H, 3) x,y bottom-up Taichi field -> (H, W, 3) top-down frame."""
+    return np.ascontiguousarray(np.flipud(img.transpose(1, 0, 2))).astype(np.float32)
+
+
+@register_renderer("odyssey_jovian_approach")
+class OdysseyJovianApproachRenderer(Renderer):
+    """Act I of the Odyssey Director: photoreal Jovian fluid dynamics,
+    a slow accelerating dolly toward the cloud deck, the sun sinking into
+    a backlit crescent, optional white-out flash at the end.
+
+    Expected params (all optional):
+        fluid_res        : fluid grid resolution (default 256)
+        samples          : AA samples per pixel (default 2)
+        planet_type      : FluidEngine profile (default "jupiter")
+        prewarm_steps    : fluid steps before frame 0 (default 100)
+        vorticity_strength, band_freq, wind_mult, shear_mult,
+        has_spot, has_pearls, meridional_damping
+                         : fluid tuning (defaults = Odyssey Act I values)
+        flash            : 0/1 — keep the terminal white-out (default 1)
+        plus every keyword of render.odyssey_acts.jovian_approach_pose
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from physics.fluid_solver import FluidEngine
+        from render.camera import SphereCamera
+        from render import odyssey_acts
+
+        self._acts = odyssey_acts
+        p = shot.params
+        fluid_res = int(p.get("fluid_res", 256))
+        self._fluid = FluidEngine(res=fluid_res, dt=0.004,
+                                  planet_type=p.get("planet_type", "jupiter"))
+        self._fluid.vorticity_strength = float(p.get("vorticity_strength", 2.0))
+        self._fluid.band_freq = float(p.get("band_freq", 12.0))
+        self._fluid.wind_mult = float(p.get("wind_mult", 1.5))
+        self._fluid.shear_mult = float(p.get("shear_mult", 0.5))
+        self._fluid.has_spot = int(p.get("has_spot", 1))
+        self._fluid.has_pearls = int(p.get("has_pearls", 1))
+        self._fluid.meridional_damping = float(p.get("meridional_damping", 0.9))
+
+        self._cam = SphereCamera(fluid_res=fluid_res,
+                                 render_res=max(self.width, self.height),
+                                 has_rings=0,
+                                 samples=int(p.get("samples", 2)),
+                                 render_w=self.width, render_h=self.height)
+        # Photoreal clouds, not the pi-lattice debug view.
+        self._cam.geo_engine.update_observer_attention(1.0)
+
+        self._pose_kwargs = {
+            k: float(p[k]) for k in (
+                "dist_start", "dist_fall", "dist_gamma", "pan_total",
+                "tilt_start", "tilt_rise", "roll_onset", "roll_max",
+                "sun_azimuth_offset", "sun_azimuth_sweep",
+                "sun_ly_start", "sun_ly_fall", "flash_onset", "flash_gain",
+            ) if k in p
+        }
+        if not int(p.get("flash", 1)):
+            self._pose_kwargs["flash_gain"] = 0.0
+
+        self._fluid_frame = 0
+        for _ in range(int(p.get("prewarm_steps", 100))):
+            self._fluid.step(self._fluid_frame)
+            self._fluid_frame += 1
+        self._prewarm = self._fluid_frame
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        # Keep the stateful sim in lockstep with the frame index so chunked
+        # or resumed renders see the same atmosphere as a continuous run.
+        while self._fluid_frame < self._prewarm + frame_idx:
+            self._fluid.step(self._fluid_frame)
+            self._fluid_frame += 1
+
+        pose = self._acts.jovian_approach_pose(t, **self._pose_kwargs)
+        cam = self._cam
+        cam.cam_dist = pose["cam_dist"]
+        cam.cam_pan = pose["cam_pan"]
+        cam.cam_tilt = pose["cam_tilt"]
+        cam.cam_roll = pose["cam_roll"]
+        cam.exposure = pose["exposure"]
+        lx, ly, lz = pose["sun_dir"]
+
+        time_arg = float(frame_idx) / max(1, self.shot.fps)
+        cam.render_gas_giant(self._fluid.dye, lx, ly, lz, time_arg)
+        return _xy_to_rows(cam.get_image_data())
+
+
+@register_renderer("stargate_corridor")
+class StargateCorridorRenderer(Renderer):
+    """Act II of the Odyssey Director: the widescreen slit-scan light
+    corridor with colour epochs and the horizontal-to-vertical tumble.
+
+    Expected params (all optional):
+        samples : AA samples per pixel (default 2)
+        plus every keyword of render.odyssey_acts.corridor_pose
+        (tumble_start, tumble_width, tumble_angle, entry_flash,
+        flash_decay, base_exposure)
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.stargate_corridor import StargateCorridor
+        from render import odyssey_acts
+
+        self._acts = odyssey_acts
+        p = shot.params
+        self._corridor = StargateCorridor(render_w=self.width,
+                                          render_h=self.height,
+                                          samples=int(p.get("samples", 2)))
+        self._pose_kwargs = {
+            k: float(p[k]) for k in (
+                "tumble_start", "tumble_width", "tumble_angle",
+                "entry_flash", "flash_decay", "base_exposure",
+            ) if k in p
+        }
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pose = self._acts.corridor_pose(t, **self._pose_kwargs)
+        time_arg = float(frame_idx) / max(1, self.shot.fps)
+        self._corridor.render_frame(time_arg, pose["progress"],
+                                    pose["roll"], pose["exposure"])
+        img = np.clip(self._corridor.pixels.to_numpy(), 0.0, 1.0)
+        return _xy_to_rows(img)
+
+
+@register_renderer("odyssey_infinite")
+class OdysseyInfiniteRenderer(Renderer):
+    """Act III of the Odyssey Director: the gravitationally lensed black
+    hole, a slow fall toward the event horizon with the mass ramping and
+    a final fade to black.
+
+    Expected params (all optional):
+        samples  : AA samples per pixel (default 2)
+        fluid_res: SphereCamera dye-texture resolution — unused by the
+                   black-hole path, kept small (default 128)
+        bh_steps : geodesic march steps (default 320)
+        bh_dt    : geodesic step size (default 0.08)
+        fade     : 0/1 — keep the terminal fade to black (default 1)
+        plus every keyword of render.odyssey_acts.infinite_pose
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        _ensure_taichi()
+        from render.camera import SphereCamera
+        from render import odyssey_acts
+
+        self._acts = odyssey_acts
+        p = shot.params
+        self._cam = SphereCamera(fluid_res=int(p.get("fluid_res", 128)),
+                                 render_res=max(self.width, self.height),
+                                 has_rings=0,
+                                 samples=int(p.get("samples", 2)),
+                                 render_w=self.width, render_h=self.height)
+        # March budget is baked into the kernel at first compile.
+        self._cam.bh_steps = int(p.get("bh_steps", 320))
+        self._cam.bh_dt = float(p.get("bh_dt", 0.08))
+        self._pose_kwargs = {
+            k: float(p[k]) for k in (
+                "dist_start", "dist_fall", "dist_gamma", "tilt_start",
+                "tilt_rise", "pan_total", "mass_start", "mass_ramp",
+                "fade_onset",
+            ) if k in p
+        }
+        if not int(p.get("fade", 1)):
+            self._pose_kwargs["fade_onset"] = 2.0  # never reached in [0, 1]
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        pose = self._acts.infinite_pose(t, **self._pose_kwargs)
+        cam = self._cam
+        cam.cam_dist = pose["cam_dist"]
+        cam.cam_tilt = pose["cam_tilt"]
+        cam.cam_pan = pose["cam_pan"]
+        cam.cam_roll = pose["cam_roll"]
+        cam.exposure = pose["exposure"]
+        cam.geo_engine.update_black_hole_mass(pose["bh_mass"])
+
+        time_arg = float(frame_idx) / max(1, self.shot.fps)
+        cam.render_black_hole(time_arg)
+        return _xy_to_rows(cam.get_image_data())
+
+
 # ---- helpers ----
 
 def shot_param(shot: Shot, key: str, default):

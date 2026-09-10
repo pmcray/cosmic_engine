@@ -24,6 +24,7 @@ def test_compose_voyage_returns_valid_shot_graph() -> None:
         "diffuse_nebula", "stellar_surface", "exoplanet_atmosphere",
         "terrain", "ca_creatures", "kerr_black_hole",
         "slitscan_tunnel", "cosmic_web",
+        "odyssey_jovian_approach", "stargate_corridor", "odyssey_infinite",
     }
     for s in g.shots:
         assert s.renderer in known, s.renderer
