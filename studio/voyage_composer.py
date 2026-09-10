@@ -561,6 +561,92 @@ def t_odyssey_infinite_finale(rng: random.Random):
     return (renderer, params, cam, motion, palette)
 
 
+# ---- Fractal dive phrases ------------------------------------------
+#
+# Deep-dive locations. Each is a point on the boundary with structure at
+# every depth; the digit count bounds how deep that centre can be pushed
+# before the reference orbit needs re-deriving.
+
+FRACTAL_LOCATIONS = (
+    # (name, center_re, center_im, power)
+    # Each centre was bisected at high precision until its orbit survives
+    # thousands of iterations, so the dive keeps finding structure all the
+    # way down; the digit count bounds how deep it can be pushed before the
+    # reference orbit needs re-deriving.
+    ("seahorse_valley",
+     "-0.737751206161254491181307210762363450",
+     "0.1276207733591109064923511174750151381", 2),
+    ("elephant_valley",
+     "0.2924137270354271177935041176362840817",
+     "0.0149056207922282518104476262507482955", 2),
+    ("triple_spiral",
+     "-0.087947259278037183807137999348274103",
+     "0.6552960232344219817403402651021707434", 2),
+    ("scepter_valley",
+     "-1.749164760990536265979793535947397794",
+     "-0.000354908863341066613549520963946711", 2),
+    ("dendrite",
+     "-0.129684478118252256638573814717243139",
+     "0.8756983234785321890495082748370532110", 2),
+    ("multibrot_3",
+     "0.3575572475710187173097895550841719553",
+     "0.7101740570828986189270892820783667134", 3),
+    ("multibrot_4",
+     "0.6370710737609568638007646787830163914",
+     "0.2803614520918594356942172103114730702", 4),
+    ("multibrot_5",
+     "0.7892825805319152899034950303947405545",
+     "-0.658215581388023392607858154002439068", 5),
+)
+
+
+def _fractal_location(rng: random.Random):
+    return rng.choice(FRACTAL_LOCATIONS)
+
+
+def t_fractal_dive(rng: random.Random):
+    """A long exponential plunge into the set — the Multibrot answer to
+    the slit-scan tunnel. Deep enough that only perturbation reaches it."""
+    name, cre, cim, power = _fractal_location(rng)
+    start = _r(rng, 1.2, 2.2)
+    end = 10.0 ** _r(rng, -22.0, -14.0)
+    params = {
+        "center_re": cre,
+        "center_im": cim,
+        "power": power,
+        "scale_start": start,
+        "scale_end": end,
+        "rotation_deg_total": _r(rng, -220.0, 220.0),
+        "samples": 2,
+        "color_cycles": _r(rng, 3.0, 7.0),
+        "color_phase": _r(rng, 0.0, 1.0),
+        "iter_per_decade": rng.choice([600, 800, 1000]),
+        "seed": _ri(rng, 0, 999_999),
+    }
+    return ("fractal_dive", params, Camera(), "deep_dive", "trumbull_2001")
+
+
+def t_fractal_dive_shallow(rng: random.Random):
+    """A shorter dive that stays in reach of visible large-scale
+    structure — used as an approach or resolution beat rather than a
+    tunnel."""
+    name, cre, cim, power = _fractal_location(rng)
+    params = {
+        "center_re": cre,
+        "center_im": cim,
+        "power": power,
+        "scale_start": _r(rng, 0.6, 1.4),
+        "scale_end": 10.0 ** _r(rng, -8.0, -5.0),
+        "rotation_deg_total": _r(rng, -60.0, 60.0),
+        "samples": 2,
+        "color_cycles": _r(rng, 2.5, 5.5),
+        "color_phase": _r(rng, 0.0, 1.0),
+        "seed": _ri(rng, 0, 999_999),
+    }
+    palette = rng.choice(["trumbull_2001", "hubble_sii_ha_oiii"])
+    return ("fractal_dive", params, Camera(), "push_in", palette)
+
+
 # ============================================================
 # Phases
 # ============================================================
@@ -588,7 +674,8 @@ PHASES: tuple[Phase, ...] = (
         name="threshold",
         duration_frac=0.10,
         n_shots=(3, 4),
-        templates=(t_kerr_disc, t_odyssey_infinite, t_jovian_grs, t_stellar_m, t_nebula),
+        templates=(t_kerr_disc, t_odyssey_infinite, t_jovian_grs, t_stellar_m,
+                   t_nebula, t_fractal_dive_shallow),
         palette_pool=("trumbull_2001", "hubble_sii_ha_oiii"),
         transition_to_next="slitscan",
     ),
@@ -596,7 +683,8 @@ PHASES: tuple[Phase, ...] = (
         name="tunnel",
         duration_frac=0.10,
         n_shots=(2, 3),
-        templates=(t_slitscan_tunnel, t_stargate_corridor, t_kerr_disc, t_stargate_corridor),
+        templates=(t_slitscan_tunnel, t_stargate_corridor, t_fractal_dive,
+                   t_kerr_disc, t_stargate_corridor, t_fractal_dive),
         palette_pool=("trumbull_2001",),
         transition_kind="hard_cut",
         transition_to_next="slitscan",
@@ -633,7 +721,8 @@ PHASES: tuple[Phase, ...] = (
         name="resolution",
         duration_frac=0.12,
         n_shots=(3, 4),
-        templates=(t_saturnian_drift, t_spiral_face_on, t_nebula, t_jovian_approach, t_odyssey_infinite_finale),
+        templates=(t_saturnian_drift, t_spiral_face_on, t_nebula, t_jovian_approach,
+                   t_odyssey_infinite_finale, t_fractal_dive_shallow),
         palette_pool=("nfb_universe_1960", "trumbull_2001"),
     ),
 )

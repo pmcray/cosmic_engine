@@ -5,6 +5,10 @@ A high-performance Python-based CLI tool and library for Parametric, Stochastic,
 > **Cinematic sequences:** for the offline '2001'-style sequence renderer
 > (Jupiter approach → Stargate corridor → black hole, up to UHD), see
 > [ODYSSEY_README.md](ODYSSEY_README.md) / `odyssey_director.py`.
+>
+> **Fractal deep dives:** for Mandelbrot / Multibrot zooms far past
+> float64's reach, see [FRACTAL_DIVE_README.md](FRACTAL_DIVE_README.md) /
+> `render/fractal_dive.py`.
 
 ## Features
 

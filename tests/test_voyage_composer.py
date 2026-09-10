@@ -16,16 +16,14 @@ def test_compose_voyage_returns_valid_shot_graph() -> None:
     g = compose_voyage(target_seconds=60.0, seed=1)
     g.validate()
     assert len(g.shots) >= len(PHASES)  # at least one shot per phase
-    # Every shot references a known renderer name (the validator only
-    # checks that the field exists; we sanity-check it's plausibly one
-    # of ours).
-    known = {
-        "volumetric_gas_giant", "saturn_class", "spiral_galaxy",
-        "diffuse_nebula", "stellar_surface", "exoplanet_atmosphere",
-        "terrain", "ca_creatures", "kerr_black_hole",
-        "slitscan_tunnel", "cosmic_web",
-        "odyssey_jovian_approach", "stargate_corridor", "odyssey_infinite",
-    }
+    # Every shot must name a renderer that is actually registered — the
+    # manifest validator only checks that the field exists, so a typo or
+    # a template pointing at a renderer nobody wrote would otherwise
+    # survive all the way to render time.
+    import render.adapters  # noqa: F401 — registration side effect
+    from render.core import list_renderers
+
+    known = set(list_renderers())
     for s in g.shots:
         assert s.renderer in known, s.renderer
     print("ok: test_compose_voyage_returns_valid_shot_graph")

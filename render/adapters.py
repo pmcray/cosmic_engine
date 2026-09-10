@@ -837,6 +837,98 @@ class OdysseyInfiniteRenderer(Renderer):
         return _xy_to_rows(cam.get_image_data())
 
 
+@register_renderer("fractal_dive")
+class FractalDiveRenderer(Renderer):
+    """Mandelbrot / Multibrot deep dive via perturbation theory
+    (render.fractal_dive). Exponential zoom from scale_start to
+    scale_end over the shot; fully deterministic (fixed supersampling
+    grid, no RNG). Runs on the Taichi f64 engine when Taichi is
+    available, else on the vectorised numpy engine.
+
+    Expected params (all optional):
+        center_re, center_im : dive centre as decimal strings — supply
+                               enough digits for the target depth
+        power                : Multibrot exponent d >= 2 (default 2)
+        scale_start          : viewport half-height at t=0 (default 1.8)
+        scale_end            : ... at t=1 (default 1e-12)
+        rotation_deg_start   : frame rotation at t=0 (default 0)
+        rotation_deg_total   : additional rotation across the shot
+                               (default 120 — the slow corkscrew)
+        samples              : supersampling grid side (default 2 = 4x)
+        escape_radius        : bailout radius (default 64)
+        iter_base, iter_per_decade : iteration budget curve
+        color_cycles, color_phase  : palette cycling controls — how many
+                               times the palette repeats across the
+                               frame's escape-count range, and where it
+                               starts
+        interior_color       : RGB for non-escaping points (default black)
+        engine               : "auto" | "taichi" | "numpy"
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        from render import fractal_dive as fd
+        from scene.palette import get_palette
+
+        p = shot.params
+        self._fd = fd
+        self._power = int(p.get("power", 2))
+        self._scale_start = float(p.get("scale_start", 1.8))
+        self._scale_end = float(p.get("scale_end", 1e-12))
+        self._rot0 = float(p.get("rotation_deg_start", 0.0)) * np.pi / 180.0
+        self._rot_total = float(p.get("rotation_deg_total", 120.0)) * np.pi / 180.0
+        self._samples = max(1, int(p.get("samples", 2)))
+        self._escape_radius = float(p.get("escape_radius", 64.0))
+        self._iter_base = int(p.get("iter_base", 600))
+        self._iter_per_decade = int(p.get("iter_per_decade", 800))
+        self._color_cycles = float(p.get("color_cycles", 4.0))
+        self._color_phase = float(p.get("color_phase", 0.0))
+        self._interior = tuple(p.get("interior_color", (0.0, 0.0, 0.0)))
+        self._anchors = get_palette(shot.palette.name).anchors
+
+        deepest = min(self._scale_start, self._scale_end)
+        budget = fd.iter_budget(deepest, self._iter_base, self._iter_per_decade)
+        self._orbit = fd.ReferenceOrbit(
+            str(p.get("center_re", fd.DEFAULT_CENTER_RE)),
+            str(p.get("center_im", fd.DEFAULT_CENTER_IM)),
+            power=self._power,
+            max_iter=budget,
+            precision=fd.required_precision(deepest),
+        )
+
+        engine = p.get("engine", "auto")
+        self._engine = None
+        if engine in ("auto", "taichi") and fd._HAS_TAICHI:
+            _ensure_taichi()
+            self._engine = fd.FractalDiveEngine(self.width, self.height,
+                                                self._orbit)
+        elif engine == "taichi":
+            raise RuntimeError("fractal_dive: taichi engine requested "
+                               "but taichi is not installed")
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        fd = self._fd
+        scale = fd.dive_scale(t, self._scale_start, self._scale_end)
+        rotation = self._rot0 + t * self._rot_total
+        max_iter = fd.iter_budget(scale, self._iter_base,
+                                  self._iter_per_decade)
+
+        acc = np.zeros((self.height, self.width, 3), dtype=np.float64)
+        offsets = fd.supersample_offsets(self._samples)
+        for (dx, dy) in offsets:
+            if self._engine is not None:
+                mu = self._engine.compute_mu(scale, rotation, max_iter,
+                                             self._escape_radius, dx, dy)
+            else:
+                dc = fd.pixel_deltas(self.width, self.height, scale,
+                                     rotation, dx, dy)
+                mu = fd.perturbation_grid(self._orbit, dc, max_iter,
+                                          self._escape_radius)
+            acc += fd.colorize(mu, self._anchors, self._color_cycles,
+                               self._color_phase, self._interior)
+        return (acc / len(offsets)).astype(np.float32)
+
+
 # ---- helpers ----
 
 def shot_param(shot: Shot, key: str, default):
