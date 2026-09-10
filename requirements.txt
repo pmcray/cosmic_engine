@@ -9,7 +9,7 @@ transformers>=4.30.0
 accelerate>=0.20.0
 opencv-python>=4.8.0
 # Render pipeline (manifest-driven graph executor)
-taichi>=1.6
+taichi>=1.7.0
 imageio[ffmpeg,pyav]>=2.31
 av>=11.0
 # Optional HDR I/O (uncomment for EXR support)

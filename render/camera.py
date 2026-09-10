@@ -7,21 +7,87 @@ from render.geodesic_engine import GeodesicEngine
 
 @ti.data_oriented
 class SphereCamera:
-    def __init__(self, fluid_res=512, render_res=1024, has_rings=0, samples=4):
+    def __init__(self, fluid_res=512, render_res=1024, has_rings=0, samples=4,
+                 render_w=None, render_h=None):
         self.fluid_res = fluid_res
         self.render_res = render_res
+        # Rectangular output (e.g. 3840x2160 UHD); defaults to the square render_res
+        self.render_w = render_w if render_w is not None else render_res
+        self.render_h = render_h if render_h is not None else render_res
+        self.aspect = self.render_w / self.render_h
         self.has_rings = has_rings
         self.samples = samples # Controls Anti-Aliasing quality
-        
+
         # Instantiate the Geodesic Engine for ZPHC (Zero-Point Harmonic Collapse)
-        self.geo_engine = GeodesicEngine(render_res=render_res, samples=samples)
-        
-        # Camera transform parameters
+        self.geo_engine = GeodesicEngine(render_res=render_res, samples=samples,
+                                         render_w=self.render_w, render_h=self.render_h)
+
+        # Camera transform parameters. These live in Taichi fields (not plain
+        # Python attributes) so kernels see updated values every frame --
+        # Python scalars would be baked in as constants at first compile.
+        self._cam_tilt = ti.field(dtype=float, shape=())
+        self._cam_pan = ti.field(dtype=float, shape=())
+        self._cam_roll = ti.field(dtype=float, shape=())
+        # Dolly distance of the camera from the planet centre (2001-style slow approach)
+        self._cam_dist = ti.field(dtype=float, shape=())
+        # Global exposure multiplier (lets the director sink shots into darkness)
+        self._exposure = ti.field(dtype=float, shape=())
+
         self.cam_tilt = -0.45
         self.cam_pan = 0.0
         self.cam_roll = 0.0
-        
-        self.final_output = ti.Vector.field(3, dtype=float, shape=(self.render_res, self.render_res))
+        self.cam_dist = 4.0
+        self.exposure = 1.0
+
+        # Geodesic march budget for the black hole renderer. Baked into the
+        # kernel at first compile, so set these before the first frame.
+        # The defaults reproduce the original 100 x 0.1 behaviour.
+        self.bh_steps = 100
+        self.bh_dt = 0.1
+
+        self.final_output = ti.Vector.field(3, dtype=float, shape=(self.render_w, self.render_h))
+
+    # Property wrappers keep the original attribute API (director code does
+    # e.g. `camera.cam_roll *= 0.9`) while storing values in Taichi fields.
+    @property
+    def cam_tilt(self):
+        return self._cam_tilt[None]
+
+    @cam_tilt.setter
+    def cam_tilt(self, v):
+        self._cam_tilt[None] = float(v)
+
+    @property
+    def cam_pan(self):
+        return self._cam_pan[None]
+
+    @cam_pan.setter
+    def cam_pan(self, v):
+        self._cam_pan[None] = float(v)
+
+    @property
+    def cam_roll(self):
+        return self._cam_roll[None]
+
+    @cam_roll.setter
+    def cam_roll(self, v):
+        self._cam_roll[None] = float(v)
+
+    @property
+    def cam_dist(self):
+        return self._cam_dist[None]
+
+    @cam_dist.setter
+    def cam_dist(self, v):
+        self._cam_dist[None] = float(v)
+
+    @property
+    def exposure(self):
+        return self._exposure[None]
+
+    @exposure.setter
+    def exposure(self, v):
+        self._exposure[None] = float(v)
 
     @ti.func
     def bilinear_interp(self, field: ti.template(), p):
@@ -66,39 +132,67 @@ class SphereCamera:
         h_right = self.get_cloud_height(field, tex_u + eps, tex_v)
         h_up = self.get_cloud_height(field, tex_u, tex_v + eps)
         
-        # Gradient in texture space (Reduced from 50.0 to 12.0 for softer, more realistic clouds)
-        du = (h_right - h_center) * 12.0 
-        dv = (h_up - h_center) * 12.0
+        # Gradient in texture space. Kept gentle: the calmed fluid sim has
+        # crisp band boundaries whose luminance edges read as cliffs when
+        # this is pushed hard.
+        du = (h_right - h_center) * 6.0
+        dv = (h_up - h_center) * 6.0
         
         # Perturb normal
         new_n = n - (tangent * du) - (bitangent * dv)
         new_n /= ti.sqrt(new_n[0]**2 + new_n[1]**2 + new_n[2]**2)
         
         # Mix the perturbed normal with the original to control the strength
-        bump_strength = 0.85 # Softened bump strength
+        bump_strength = 0.55 # Softened bump strength
         final_n = n * (1.0 - bump_strength) + new_n * bump_strength
         final_n /= ti.sqrt(final_n[0]**2 + final_n[1]**2 + final_n[2]**2)
         
         return final_n
 
     @ti.func
+    def hash31(self, p):
+        n = ti.sin(p[0] * 12.9898 + p[1] * 78.233 + p[2] * 37.719) * 43758.5453
+        return n - ti.floor(n)
+
+    @ti.func
+    def vnoise3(self, p):
+        """Smooth 3D value noise. The previous hash-per-sample version was
+        effectively white noise, which rendered as per-pixel speckle rather
+        than cloud wisps."""
+        ip = ti.floor(p)
+        fp = p - ip
+        w = fp * fp * (3.0 - 2.0 * fp)
+
+        n000 = self.hash31(ip)
+        n100 = self.hash31(ip + ti.Vector([1.0, 0.0, 0.0]))
+        n010 = self.hash31(ip + ti.Vector([0.0, 1.0, 0.0]))
+        n110 = self.hash31(ip + ti.Vector([1.0, 1.0, 0.0]))
+        n001 = self.hash31(ip + ti.Vector([0.0, 0.0, 1.0]))
+        n101 = self.hash31(ip + ti.Vector([1.0, 0.0, 1.0]))
+        n011 = self.hash31(ip + ti.Vector([0.0, 1.0, 1.0]))
+        n111 = self.hash31(ip + ti.Vector([1.0, 1.0, 1.0]))
+
+        nx00 = n000 * (1.0 - w[0]) + n100 * w[0]
+        nx10 = n010 * (1.0 - w[0]) + n110 * w[0]
+        nx01 = n001 * (1.0 - w[0]) + n101 * w[0]
+        nx11 = n011 * (1.0 - w[0]) + n111 * w[0]
+
+        nxy0 = nx00 * (1.0 - w[1]) + nx10 * w[1]
+        nxy1 = nx01 * (1.0 - w[1]) + nx11 * w[1]
+
+        return nxy0 * (1.0 - w[2]) + nxy1 * w[2]
+
+    @ti.func
     def fbm_noise(self, p):
         value = 0.0
         amp = 0.5
-        freq = 1.0
-        # 4 octaves of pseudo-random noise
+        q = p
+        # 4 octaves of smooth value noise
         for _ in range(4):
-            # Simple hash-based noise approximation for GPU
-            qx = p[0] * freq
-            qy = p[1] * freq
-            qz = p[2] * freq
-            n = ti.sin(qx*12.9898 + qy*78.233 + qz*37.719) * 43758.5453
-            n = n - ti.floor(n) # fractional part
-            
-            value += n * amp
+            value += self.vnoise3(q) * amp
+            q = q * 2.03 + ti.Vector([17.3, 9.1, 4.7])
             amp *= 0.5
-            freq *= 2.0
-            
+
         return value
 
     @ti.func
@@ -146,18 +240,18 @@ class SphereCamera:
 
     @ti.func
     def cast_ray(self, u, v, light_dir, render_buffer: ti.template(), time: float):
-        ro = ti.Vector([0.0, 0.0, -4.0])
-        rd = ti.Vector([u, v, 1.5]) 
+        ro = ti.Vector([0.0, 0.0, -self._cam_dist[None]])
+        rd = ti.Vector([u, v, 1.5])
         rd /= ti.sqrt(rd[0]**2 + rd[1]**2 + rd[2]**2)
-        
+
         # Apply camera rotations (roll, tilt, pan)
-        rd = self.rot_z(rd, self.cam_roll)
-        
-        ro = self.rot_x(ro, self.cam_tilt)
-        rd = self.rot_x(rd, self.cam_tilt)
-        
-        ro = self.rot_y(ro, self.cam_pan)
-        rd = self.rot_y(rd, self.cam_pan)
+        rd = self.rot_z(rd, self._cam_roll[None])
+
+        ro = self.rot_x(ro, self._cam_tilt[None])
+        rd = self.rot_x(rd, self._cam_tilt[None])
+
+        ro = self.rot_y(ro, self._cam_pan[None])
+        rd = self.rot_y(rd, self._cam_pan[None])
         
         hit_sphere = False
         t_sphere = 1e10
@@ -334,18 +428,19 @@ class SphereCamera:
         
         for i, j in self.final_output:
             accumulated_color = ti.Vector([0.0, 0.0, 0.0])
-            
+
             # Sub-pixel Jittering for Anti-Aliasing
             for k in range(self.samples):
                 offset_x = ti.random() - 0.5
                 offset_y = ti.random() - 0.5
-                u = (float(i) + offset_x) / self.render_res * 2.0 - 1.0
-                v = (float(j) + offset_y) / self.render_res * 2.0 - 1.0
-                
+                # Aspect-corrected UV: vertical FOV fixed, horizontal widened
+                u = ((float(i) + offset_x) / self.render_w * 2.0 - 1.0) * (self.render_w / self.render_h)
+                v = (float(j) + offset_y) / self.render_h * 2.0 - 1.0
+
                 accumulated_color += self.cast_ray(u, v, light_dir, render_buffer, time)
-                
-            final_color = accumulated_color / float(self.samples)
-            
+
+            final_color = accumulated_color / float(self.samples) * self._exposure[None]
+
             # ACES Tone Mapping
             a = 2.51
             b = 0.03
@@ -369,26 +464,28 @@ class SphereCamera:
             for k in range(self.samples):
                 offset_x = ti.random() - 0.5
                 offset_y = ti.random() - 0.5
-                u = (float(i) + offset_x) / self.render_res * 2.0 - 1.0
-                v = (float(j) + offset_y) / self.render_res * 2.0 - 1.0
-                
-                # Setup Ray
-                ro = ti.Vector([0.0, 0.0, -8.0]) # Further back for black hole to see disk
-                rd = ti.Vector([u, v, 1.5]) 
+                u = ((float(i) + offset_x) / self.render_w * 2.0 - 1.0) * (self.render_w / self.render_h)
+                v = (float(j) + offset_y) / self.render_h * 2.0 - 1.0
+
+                # Setup Ray. The black hole sits twice as far out as the planet
+                # (default cam_dist=4.0 reproduces the original -8.0 framing).
+                ro = ti.Vector([0.0, 0.0, -2.0 * self._cam_dist[None]])
+                rd = ti.Vector([u, v, 1.5])
                 rd /= ti.sqrt(rd[0]**2 + rd[1]**2 + rd[2]**2)
-                
+
                 # Apply camera rotations
-                rd = self.rot_z(rd, self.cam_roll)
-                ro = self.rot_x(ro, self.cam_tilt)
-                rd = self.rot_x(rd, self.cam_tilt)
-                ro = self.rot_y(ro, self.cam_pan)
-                rd = self.rot_y(rd, self.cam_pan)
-                
+                rd = self.rot_z(rd, self._cam_roll[None])
+                ro = self.rot_x(ro, self._cam_tilt[None])
+                rd = self.rot_x(rd, self._cam_tilt[None])
+                ro = self.rot_y(ro, self._cam_pan[None])
+                rd = self.rot_y(rd, self._cam_pan[None])
+
                 # Call Black Hole renderer
-                accumulated_color += self.geo_engine.black_hole.render(ro, rd, time, mass)
-                
-            final_color = accumulated_color / float(self.samples)
-            
+                accumulated_color += self.geo_engine.black_hole.render_n(
+                    ro, rd, time, mass, self.bh_steps, self.bh_dt)
+
+            final_color = accumulated_color / float(self.samples) * self._exposure[None]
+
             # ACES Tone Mapping
             a = 2.51
             b = 0.03
