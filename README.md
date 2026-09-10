@@ -9,6 +9,10 @@ A high-performance Python-based CLI tool and library for Parametric, Stochastic,
 > **Fractal deep dives:** for Mandelbrot / Multibrot zooms far past
 > float64's reach, see [FRACTAL_DIVE_README.md](FRACTAL_DIVE_README.md) /
 > `render/fractal_dive.py`.
+>
+> **Traveller worlds:** for the Foreven sector and the worldmaker /
+> weorold / Erith integrations, see [WORLDS_README.md](WORLDS_README.md)
+> / `worlds/`.
 
 ## Features
 

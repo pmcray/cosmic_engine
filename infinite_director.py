@@ -5,71 +5,103 @@ import time
 import shutil
 import taichi as ti
 
-# Ensure Taichi is initialized globally before any other classes try to map memory!
-ti.init(arch=ti.gpu)
-
-# Add project paths to import from other repos
-sys.path.append('/home/pmc/worldmaker')
-sys.path.append('/home/pmc/weorold')
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-import traveller_world_generator as worldmaker
+# Taichi is initialized lazily: importing this module must not seize the
+# GPU, since the manifest path and the worlds package are both usable
+# without it.
+_TI_READY = False
 
-def get_astrometric_waypoint():
-    """Uses worldmaker to generate a new star system and select a planet/encounter."""
-    system = worldmaker.generate_full_system()
-    
-    # Look for interesting worlds or just pick the first terrestrial
-    chosen_world = None
-    worlds = system.all_worlds
-    if worlds:
-        for w in worlds:
-             if w.body_type == 'Terrestrial':
-                 chosen_world = w
-                 break
-        if not chosen_world:
-             chosen_world = worlds[0]
-            
-    return system, chosen_world
+
+def ensure_taichi():
+    global _TI_READY
+    if not _TI_READY:
+        try:
+            ti.init(arch=ti.gpu)
+        except Exception:
+            ti.init(arch=ti.cpu)
+        _TI_READY = True
+
+
+def get_astrometric_waypoint(seed=None):
+    """Pick the next world to visit.
+
+    Sources worlds through the `worlds` package rather than importing
+    worldmaker from a hardcoded path: if a worldmaker checkout is
+    reachable (COSMIC_WORLDMAKER_PATH) it is used, otherwise the
+    built-in procedural Traveller generator stands in, so this runs on
+    any machine. Returns (sector, world) — the sector replaces the old
+    `system` object and carries the rest of the neighbourhood.
+    """
+    from worlds import generate_sector
+    from worlds.providers import get_provider
+
+    if seed is None:
+        seed = int(time.time()) & 0x7FFFFFFF
+    sector = generate_sector(seed=seed, name="Foreven",
+                             provider=get_provider(sector="Foreven"))
+    pool = sector.habitable() or sector.terrestrials() or sector.worlds
+    chosen = pool[seed % len(pool)] if pool else None
+    return sector, chosen
+
 
 def generate_planetary_segment(world, output_name, test_mode=False):
-    """Uses weorold to generate a planetary sequence."""
-    from wp12_full_pipeline import run_full_pipeline
-    
-    mean_temp_k = world.mean_temperature if world.mean_temperature > 0 else 288.0
-    
-    hydro_code = 7
-    atm_code = 6
-    if hasattr(world, 'hydrographics_code') and world.hydrographics_code:
+    """Render a planetary sequence for `world`.
+
+    Prefers a sister surface pipeline (weorold, then Erith) when one is
+    reachable; otherwise renders the world through the engine's own
+    terrain renderer via the manifest path, so a planetary segment is
+    always produced.
+    """
+    from worlds.providers import (ErithProvider, ProviderUnavailable,
+                                  WeoroldProvider)
+
+    print(f"Generating planetary view for {world.name}: {world.summary()}")
+
+    for provider in (WeoroldProvider(), ErithProvider()):
+        if not provider.available():
+            continue
         try:
-             hydro_code = int(world.hydrographics_code, 16)
-        except ValueError:
-             pass
-    if hasattr(world, 'atmosphere_code') and world.atmosphere_code:
-        try:
-             atm_code = int(world.atmosphere_code, 16)
-        except ValueError:
-             pass
-             
-    print(f"Generating planetary view for {world.name or 'Unknown'} (Temp={mean_temp_k}K, Atm={atm_code}, Hyd={hydro_code})")
-    
-    # Change dir to weorold so outputs land there, or run from root
-    cwd = os.getcwd()
-    os.chdir('/home/pmc/weorold')
-    
-    # Needs a dummy sketch input if we want a new map, or we just rely on defaults for now
-    run_full_pipeline(output_name=output_name, mean_temp_k=mean_temp_k, hydro_code=hydro_code, atm_code=atm_code, test_mode=test_mode)
-    
-    # The output MP4 should be at f"{output_name}_orbit.mp4"
-    result_path = f"/home/pmc/weorold/{output_name}_orbit.mp4"
-    
-    os.chdir(cwd)
-    return result_path
+            result = provider.generate_surface(world, output_name,
+                                               test_mode=test_mode)
+        except ProviderUnavailable as exc:
+            print(f"  {provider.name} unavailable: {exc}")
+            continue
+        # Pipelines return a path, or write "<output_name>_orbit.mp4"
+        # beside themselves.
+        if isinstance(result, str) and os.path.exists(result):
+            return result
+        candidate = f"{output_name}_orbit.mp4"
+        if os.path.exists(candidate):
+            return candidate
+        print(f"  {provider.name} produced no output; falling through")
+
+    return _render_world_natively(world, output_name, test_mode=test_mode)
+
+
+def _render_world_natively(world, output_name, test_mode=False):
+    """Render one world as a single-shot graph with the engine's own
+    renderers — the no-sister-repos path."""
+    import render.adapters  # noqa: F401  ensures renderers are registered
+    from director.graph import render_graph
+    from scene.manifest import ShotGraph
+    from worlds.adapter import shot_for_world
+
+    ensure_taichi()
+    shot = shot_for_world(
+        world,
+        duration_frames=30 if test_mode else 120,
+        resolution=(512, 288) if test_mode else (1920, 1080),
+    )
+    out_path = f"{output_name}.mp4"
+    render_graph(ShotGraph(shots=[shot], title=world.name), out_path)
+    return out_path
 
 def generate_exotic_segment(encounter_type, output_name, test_mode=False):
     """
     Hooks into cosmic_engine to render exotic encounters (L-systems or Geodesic Blackholes).
     """
+    ensure_taichi()
     print(f"Generating exotic segment: {encounter_type}")
     if encounter_type in ["blackhole", "hypernova"]:
          from encounters.exotic_physics import ExoticPhysicsEncounter
@@ -171,6 +203,7 @@ def generate_zphc_transition(output_name, test_mode=False):
     """
     Generates a ZPHC slit-scan transition video between encounters.
     """
+    ensure_taichi()
     print("Generating ZPHC transition...")
     frames = 15 if test_mode else 60
     res = 512 if test_mode else 1024
@@ -202,23 +235,26 @@ def stitch_sequence(video_list, output_file):
 
 
 class InfiniteDirector:
-    def __init__(self, output_dir="director_output"):
+    def __init__(self, output_dir="director_output", seed=1977):
         self.output_dir = output_dir
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
         self.segments = []
         self.iteration = 0
+        # Fixes which worlds this director visits: the same seed tours
+        # the same sector in the same order.
+        self.seed = int(seed)
 
     def run_from_manifest(self, manifest_path, output_name="sequence.mp4"):
         """Render a ShotGraph defined by a JSON manifest.
 
         This is the modern path: each shot is rendered by a registered
         Renderer, transitions are produced by the continuity engine, and
-        the result is a single tone-mapped MP4 with no hard cuts.
-        Side-by-side with `run_infinite_loop` for now; the legacy loop
-        is kept until the worldmaker/weorold integrations are themselves
-        manifest-driven.
+        the result is a single tone-mapped MP4 with no hard cuts. The
+        legacy `run_infinite_loop` below stitches finished MP4 segments
+        instead, and is kept for the sister-project surface pipelines
+        that produce their own video.
         """
         import render.adapters  # noqa: F401  ensures renderers are registered
         from scene.manifest import load_manifest
@@ -234,24 +270,28 @@ class InfiniteDirector:
              print(f"\n--- Sequence Iteration {self.iteration} ---")
              
              # 1. Astrometric Waypoint
-             system, world = get_astrometric_waypoint()
-             # Check if system has anomalies we can use for exotic encounters Let's override world
-             # picking sometimes to show off the exotic ones!
-             is_exotic = False
+             import random
+             waypoint_seed = (self.seed * 7919 + self.iteration) & 0x7FFFFFFF
+             sector, world = get_astrometric_waypoint(seed=waypoint_seed)
+             rng = random.Random(waypoint_seed ^ 0xA710)
+
+             # Every so often, detour to something the Traveller tables
+             # have no code for at all.
+             is_exotic = rng.random() < 0.3
              encounter_type = "planetary"
-             
-             if system.anomalous_planets and len(system.anomalous_planets) > 0:
-                 is_exotic = True
-                 # Pick a random exotic type we have implemented
-                 import random
-                 encounter_type = random.choice([
-                     "blackhole", 
-                     "hypernova", 
-                     "megastructure_alien", 
+             if is_exotic:
+                 encounter_type = rng.choice([
+                     "blackhole",
+                     "hypernova",
+                     "megastructure_alien",
                      "chthonic_horror"
                  ])
-             
-             segment_name = f"seg_{self.iteration}_{world.name.replace(' ', '_') if world else 'exotic'}"
+             else:
+                 print(f"Waypoint: {world.summary()}")
+
+             safe_name = (world.name.replace(' ', '_') if world and not is_exotic
+                          else encounter_type)
+             segment_name = f"seg_{self.iteration}_{safe_name}"
              vid_path = None
              
              # 2. Pick Encounter type (Planetary vs Exotic)

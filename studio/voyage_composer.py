@@ -647,6 +647,65 @@ def t_fractal_dive_shallow(rng: random.Random):
     return ("fractal_dive", params, Camera(), "push_in", palette)
 
 
+# ---- Traveller world phrases ----------------------------------------
+#
+# Worlds come from the worlds package: the Foreven sector is generated
+# once per composer run from the voyage seed, so "Foreven 1721" is the
+# same planet in every voyage built from that seed. Provider selection
+# (worldmaker if its checkout is reachable, else the built-in procedural
+# generator) happens inside worlds.get_provider.
+
+_SECTOR_CACHE: dict = {}
+
+
+def _foreven(seed: int):
+    """The sector for this voyage seed, generated once and reused."""
+    if seed not in _SECTOR_CACHE:
+        from worlds import generate_sector
+        from worlds.providers import get_provider
+        _SECTOR_CACHE[seed] = generate_sector(
+            seed=seed, name="Foreven",
+            provider=get_provider(sector="Foreven"))
+    return _SECTOR_CACHE[seed]
+
+
+def _world_phrase(rng: random.Random, kinds: tuple):
+    """Shared body: pick a world of the given kinds and adapt it."""
+    from worlds.adapter import (camera_for, motion_hint_for, palette_for,
+                                params_for, renderer_for)
+
+    sector = _foreven(rng.randint(0, 999_999))
+    pool = [w for w in sector.worlds if w.body_type in kinds] or sector.worlds
+    world = pool[rng.randrange(len(pool))]
+    return (renderer_for(world), params_for(world), camera_for(world),
+            motion_hint_for(world), palette_for(world))
+
+
+def t_traveller_world(rng: random.Random):
+    """Arrival at a Traveller world — surface fly-through, with the
+    terrain driven by the world's own hydrographics, atmosphere and
+    temperature."""
+    return _world_phrase(rng, ("terrestrial", "asteroid"))
+
+
+def t_traveller_habitable(rng: random.Random):
+    """A world someone could stand on: breathable air, liquid water."""
+    from worlds.adapter import (camera_for, motion_hint_for, palette_for,
+                                params_for, renderer_for)
+
+    sector = _foreven(rng.randint(0, 999_999))
+    pool = sector.habitable() or sector.terrestrials()
+    world = pool[rng.randrange(len(pool))]
+    return (renderer_for(world), params_for(world), camera_for(world),
+            motion_hint_for(world), palette_for(world))
+
+
+def t_traveller_giant(rng: random.Random):
+    """A gas giant or ringed giant from the sector, seen from outside."""
+    return _world_phrase(rng, ("gas_giant", "ringed_giant", "hot_jupiter",
+                               "mini_neptune", "brown_dwarf"))
+
+
 # ============================================================
 # Phases
 # ============================================================
@@ -667,7 +726,8 @@ PHASES: tuple[Phase, ...] = (
         name="approach",
         duration_frac=0.12,
         n_shots=(3, 4),
-        templates=(t_jovian_approach, t_odyssey_jovian, t_saturnian_drift, t_stellar_sun, t_exoplanet),
+        templates=(t_jovian_approach, t_odyssey_jovian, t_saturnian_drift,
+                   t_stellar_sun, t_exoplanet, t_traveller_giant),
         palette_pool=("trumbull_2001", "nfb_universe_1960"),
     ),
     Phase(
@@ -714,7 +774,8 @@ PHASES: tuple[Phase, ...] = (
         name="alien_worlds",
         duration_frac=0.16,
         n_shots=(4, 6),
-        templates=(t_terrain, t_terrain, t_ca_creatures, t_exoplanet, t_terrain),
+        templates=(t_terrain, t_traveller_world, t_traveller_habitable,
+                   t_ca_creatures, t_exoplanet, t_terrain, t_traveller_world),
         palette_pool=("jwst_nircam", "trumbull_2001"),
     ),
     Phase(
