@@ -191,18 +191,31 @@ def t_saturnian_drift(rng: random.Random):
 
 
 def t_kerr_disc(rng: random.Random):
+    """The Kerr renderer places its observer by distance and orbital
+    azimuth, so the camera here only supplies the dolly: its distance
+    from the origin is what reaches the kernel."""
+    start = _r(rng, 30.0, 46.0)
+    end = start * _r(rng, 0.55, 0.8)
     params = {
         "spin": _r(rng, 0.4, 0.999),
         "inclination_deg": _r(rng, 60.0, 88.0),
+        "inclination_deg_total": _r(rng, -12.0, 12.0),
         "disk_outer": _r(rng, 10.0, 18.0),
         "steps": rng.choice([220, 260, 300]),
         "step_size": _r(rng, 0.08, 0.14),
+        "orbit_deg": _r(rng, -40.0, 40.0),
     }
     cam = Camera(
-        position=(0.0, _r(rng, 1.0, 4.0), _r(rng, -22.0, -14.0)),
+        position=(0.0, 0.0, -start),
         target=(0.0, 0.0, 0.0),
         up=(0.0, 1.0, 0.0),
         fov_deg=_r(rng, 30.0, 40.0),
+        path_to=Camera(
+            position=(0.0, 0.0, -end),
+            target=(0.0, 0.0, 0.0),
+            up=(0.0, 1.0, 0.0),
+            fov_deg=_r(rng, 30.0, 40.0),
+        ),
     )
     return ("kerr_black_hole", params, cam, "approach", "trumbull_2001")
 

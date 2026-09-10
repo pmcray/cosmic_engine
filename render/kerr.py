@@ -59,7 +59,25 @@ if ti is not None:
             self.disk_outer[None] = disk_outer
             self.disk_inner = ti.field(dtype=float, shape=())
             self.disk_inner[None] = self._isco(spin)
+            # Observer pose. These live in Taichi fields, not Python
+            # attributes, so a director can move the camera per frame —
+            # a plain attribute would be baked in as a compile-time
+            # constant at the kernel's first compile, freezing the shot.
+            self.cam_dist = ti.field(dtype=float, shape=())
+            self.cam_dist[None] = 30.0
+            self.cam_azimuth = ti.field(dtype=float, shape=())
+            self.cam_azimuth[None] = 0.0
             self.pixels = ti.Vector.field(3, dtype=float, shape=(res, res))
+
+        def set_camera(self, distance: float = None, azimuth: float = None,
+                       inclination: float = None):
+            """Move the observer between frames."""
+            if distance is not None:
+                self.cam_dist[None] = float(distance)
+            if azimuth is not None:
+                self.cam_azimuth[None] = float(azimuth)
+            if inclination is not None:
+                self.incl[None] = float(inclination)
 
         @staticmethod
         def _isco(a: float) -> float:
@@ -88,15 +106,19 @@ if ti is not None:
                 u = (float(i) / self.res) * 2.0 - 1.0
                 v = (float(j) / self.res) * 2.0 - 1.0
 
-                # Camera basis at large radius along the inclined axis.
-                cam_r = 30.0
+                # Camera basis at the observer's radius, orbited by the
+                # azimuth about the disk normal (the y axis here).
+                cam_r = self.cam_dist[None]
+                phi = self.cam_azimuth[None]
+                cos_p = ti.cos(phi)
+                sin_p = ti.sin(phi)
                 ro = ti.Vector(
-                    [cam_r * sin_i, cam_r * cos_i, 0.0]
+                    [cam_r * sin_i * cos_p, cam_r * cos_i, cam_r * sin_i * sin_p]
                 )
                 # Look toward origin; pixel offset in the camera plane.
                 fwd = -ro / cam_r
-                right = ti.Vector([0.0, 0.0, 1.0])
-                up = ti.Vector([-cos_i, sin_i, 0.0])
+                right = ti.Vector([-sin_p, 0.0, cos_p])
+                up = ti.Vector([-cos_i * cos_p, sin_i, -cos_i * sin_p])
                 rd = fwd + right * u * 0.6 + up * v * 0.6
                 rd = rd / ti.sqrt(rd[0] ** 2 + rd[1] ** 2 + rd[2] ** 2)
 

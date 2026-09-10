@@ -76,12 +76,23 @@ class SlitScanTunnelRenderer(Renderer):
 class KerrBlackHoleRenderer(Renderer):
     """Wraps `render.kerr.KerrRenderer`.
 
+    The Kerr kernel builds its own camera from an observer distance and
+    an orbital azimuth rather than a free camera, so the shot's Camera
+    is read for its distance from the origin (giving a dolly when it has
+    a `path_to`) and the rest of the move comes from the orbit and
+    inclination sweeps below.
+
     Expected params:
         spin: float in [0, 1) — dimensionless a/M (default 0.7)
         inclination_deg: viewing angle from disk normal (default 85)
+        inclination_deg_total: how far the inclination sweeps across the
+            shot (default 0 — hold)
         disk_outer: outer disk radius in units of M (default 12)
         steps: integrator steps (default 220)
         step_size: affine step in units of M (default 0.12)
+        orbit_deg: azimuth travelled across the shot (default 25)
+        cam_dist: observer radius in units of M when the shot's camera
+            sits at the origin (default 30)
     """
 
     def __init__(self, shot: Shot):
@@ -89,17 +100,28 @@ class KerrBlackHoleRenderer(Renderer):
         import math
         _ensure_taichi()
         from render.kerr import KerrRenderer
+        p = shot.params
         side = max(self.width, self.height)
+        self._incl0 = math.radians(float(p.get("inclination_deg", 85.0)))
+        self._incl_sweep = math.radians(float(p.get("inclination_deg_total", 0.0)))
+        self._orbit = math.radians(float(p.get("orbit_deg", 25.0)))
+        self._default_dist = float(p.get("cam_dist", 30.0))
         self._r = KerrRenderer(
             res=side,
-            spin=float(shot.params.get("spin", 0.7)),
-            inclination=math.radians(float(shot.params.get("inclination_deg", 85.0))),
-            disk_outer=float(shot.params.get("disk_outer", 12.0)),
-            steps=int(shot.params.get("steps", 220)),
-            step_size=float(shot.params.get("step_size", 0.12)),
+            spin=float(p.get("spin", 0.7)),
+            inclination=self._incl0,
+            disk_outer=float(p.get("disk_outer", 12.0)),
+            steps=int(p.get("steps", 220)),
+            step_size=float(p.get("step_size", 0.12)),
         )
 
     def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        dist = float(np.linalg.norm(np.asarray(camera.position, dtype=np.float64)))
+        self._r.set_camera(
+            distance=dist if dist > 1e-6 else self._default_dist,
+            azimuth=t * self._orbit,
+            inclination=self._incl0 + t * self._incl_sweep,
+        )
         self._r.render_frame(float(frame_idx) * 0.05)
         img = self._r.pixels.to_numpy().astype(np.float32)
         return _resize_to(img, self.height, self.width)
@@ -246,7 +268,11 @@ class CACreaturesRenderer(Renderer):
         cp = camera.position
         zoom = max(0.1, 1.0 + cp[2] * 0.5)
         self._engine.set_camera(pan_x=float(cp[0]), pan_y=float(cp[1]), zoom=zoom)
-        self._engine.render(float(frame_idx) * 0.05)
+        # Frame-addressable: Lenia is stateful, so the engine is asked
+        # for a specific frame rather than told to take another step —
+        # otherwise a re-render or a resumed chunk gets whatever state
+        # the sim happened to reach.
+        self._engine.render_at(frame_idx, float(frame_idx) * 0.05)
         return self._engine.pixels.to_numpy().astype(np.float32)
 
 

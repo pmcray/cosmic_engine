@@ -127,9 +127,62 @@ def main_runner() -> int:
     test_odyssey_renderers_registered()
     test_composer_places_odyssey_phrases()
     test_stargate_corridor_adapter_smoke()
+    test_no_renderer_produces_a_frozen_shot()
     print("\nall odyssey act tests passed")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main_runner())
+
+
+def test_no_renderer_produces_a_frozen_shot() -> None:
+    """Every renderer must actually animate across its shot.
+
+    The Kerr renderer used to hardcode its observer radius and ignore
+    both the shot camera and its own `time` argument, so a 40-second
+    Kerr shot rendered as one held still. Any renderer that stops
+    responding to time or camera regresses to that, silently — nothing
+    else in the pipeline would notice.
+    """
+    try:
+        import taichi  # noqa: F401
+    except ImportError:
+        print("skip: taichi not installed")
+        return
+
+    import render.adapters  # noqa: F401 — registration side effect
+    from render.core import get_renderer
+    from studio.voyage_composer import compose_voyage
+
+    # One shot per distinct renderer, from a real composed voyage.
+    by_renderer = {}
+    for shot in compose_voyage(target_seconds=900.0, seed=42).shots:
+        by_renderer.setdefault(shot.renderer, shot)
+    assert len(by_renderer) >= 8, sorted(by_renderer)
+
+    frozen = []
+    for name, shot in sorted(by_renderer.items()):
+        shot.resolution = (48, 27)
+        shot.params["samples"] = 1
+        for key in ("march_steps", "fluid_res", "grid_dim", "tex_height",
+                    "tex_width", "n_synth_particles", "grid_size"):
+            if key in shot.params:
+                shot.params[key] = max(16, int(shot.params[key] * 0.4))
+        if name == "fractal_dive":
+            shot.params["iter_base"] = 120
+            shot.params["iter_per_decade"] = 40
+
+        r = get_renderer(name)(shot)
+        first = r.render_frame(0, 0.0, shot.camera.at(0.0)).copy()
+        last = r.render_frame(min(shot.duration_frames, 40) - 1, 1.0,
+                              shot.camera.at(1.0)).copy()
+        if np.array_equal(first, last):
+            frozen.append(name)
+        # Re-rendering the first frame still has to be bit-identical:
+        # animating must not come at the cost of determinism.
+        assert np.array_equal(first, r.render_frame(0, 0.0,
+                                                    shot.camera.at(0.0))), name
+
+    assert not frozen, f"renderers produced identical first/last frames: {frozen}"
+    print("ok: test_no_renderer_produces_a_frozen_shot")

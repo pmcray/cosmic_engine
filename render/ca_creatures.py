@@ -121,15 +121,50 @@ else:
             self.gp.from_numpy(arr)
 
             # Seed state and warm up the simulation so creatures form.
-            seedA = _seed_state(self.grid_size, seed=seed, n_seeds=10, seed_radius=A_R)
-            seedB = _seed_state(self.grid_size, seed=seed + 7, n_seeds=4, seed_radius=B_R)
-            self.A.from_numpy(seedA)
-            self.B.from_numpy(seedB)
-            for _ in range(int(warmup_steps)):
-                self.step()
+            self._seed = int(seed)
+            self._A_R = int(A_R)
+            self._B_R = int(B_R)
+            self._warmup_steps = int(warmup_steps)
+            self.sim_frame = 0
+            self.reset()
 
             self.cam = ti.field(dtype=ti.f32, shape=(8,))
             self._set_default_camera()
+
+        def reset(self):
+            """Return the simulation to its warmed-up initial state.
+
+            Lenia is stateful, so without this the engine is only ever
+            reachable forwards: a director asking for an earlier frame
+            (a re-render, a resumed chunk) would get whatever state the
+            sim happened to be in. Re-seeding is deterministic, so
+            frame N is the same however you arrive at it.
+            """
+            seedA = _seed_state(self.grid_size, seed=self._seed,
+                                n_seeds=10, seed_radius=self._A_R)
+            seedB = _seed_state(self.grid_size, seed=self._seed + 7,
+                                n_seeds=4, seed_radius=self._B_R)
+            self.A.from_numpy(seedA)
+            self.B.from_numpy(seedB)
+            for _ in range(self._warmup_steps):
+                self.step()
+            self.sim_frame = 0
+
+        def advance_to(self, frame_idx: int):
+            """Bring the simulation to `frame_idx`, rewinding if needed."""
+            if frame_idx < self.sim_frame:
+                self.reset()
+            while self.sim_frame < frame_idx:
+                for _ in range(self.substeps):
+                    self.step()
+                self.sim_frame += 1
+
+        def render_at(self, frame_idx: int, t: float) -> np.ndarray:
+            """Render a specific frame — the frame-addressable entry
+            point the graph executor uses."""
+            self.advance_to(int(frame_idx))
+            self.render_kernel()
+            return self.pixels.to_numpy()
 
         def _set_default_camera(self):
             self.set_camera(pan_x=0.0, pan_y=0.0, zoom=1.0)
@@ -142,8 +177,11 @@ else:
             self.cam.from_numpy(arr)
 
         def render(self, t: float) -> np.ndarray:
+            """Step once and render — the sequential/interactive path.
+            Use `render_at` when frames may be asked for out of order."""
             for _ in range(self.substeps):
                 self.step()
+            self.sim_frame += 1
             self.render_kernel()
             return self.pixels.to_numpy()
 
