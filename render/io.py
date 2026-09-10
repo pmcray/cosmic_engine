@@ -94,6 +94,11 @@ def _try_imports():
     except Exception:
         pass
     try:
+        import av  # type: ignore
+        backends["av"] = av
+    except Exception:
+        pass
+    try:
         import tifffile  # type: ignore
         backends["tifffile"] = tifffile
     except Exception:
@@ -150,13 +155,22 @@ def write_png(path: str | Path, linear_rgb: np.ndarray, exposure_stops: float = 
 # ---- Video writer -------------------------------------------------------
 
 class VideoWriter:
-    """Streams scene-linear frames to a tonemapped MP4 via imageio-ffmpeg.
+    """Streams scene-linear frames to a tonemapped MP4.
 
     Use as a context manager:
 
         with VideoWriter("out.mp4", fps=24, exposure_stops=0.0) as vw:
             for frame in renderer.iter_frames():
                 vw.append(frame)
+
+    Encoding goes through PyAV directly. imageio's pyav plugin was the
+    original path, but it assigns the stream's dimensions lazily on the
+    first frame, which recent PyAV rejects once the codec is open
+    ("Cannot change width after codec is open") — so a render would die
+    partway through on a current environment. Driving PyAV ourselves
+    means the size is fixed from the first frame and nothing is guessed
+    from version to version; imageio remains the fallback for hosts that
+    have it but not PyAV.
     """
 
     def __init__(self, path: str | Path, fps: int = 24, exposure_stops: float = 0.0, codec: str = "libx264"):
@@ -164,24 +178,68 @@ class VideoWriter:
         self.fps = fps
         self.exposure_stops = exposure_stops
         self.codec = codec
-        self._writer = None
+        self._container = None
+        self._stream = None
+        self._writer = None          # imageio fallback
+        self._size = None
 
     def __enter__(self):
         backends = _try_imports()
-        if "imageio" not in backends:
-            raise RuntimeError(
-                "VideoWriter needs imageio-ffmpeg. Install with: pip install imageio[ffmpeg]"
-            )
+        if "av" in backends or "imageio" in backends:
+            return self
+        raise RuntimeError(
+            "VideoWriter needs PyAV (pip install av) or imageio "
+            "(pip install imageio[ffmpeg])"
+        )
+
+    def _open(self, height: int, width: int) -> None:
+        """Open the container once the frame size is known."""
+        backends = _try_imports()
+        self._size = (height, width)
+        av = backends.get("av")
+        if av is not None:
+            self._container = av.open(self.path, mode="w")
+            self._stream = self._container.add_stream(self.codec, rate=self.fps)
+            # Set before the first encode: h264 needs even dimensions.
+            self._stream.width = width - (width % 2)
+            self._stream.height = height - (height % 2)
+            self._stream.pix_fmt = "yuv420p"
+            return
         iio = backends["imageio"]
         self._writer = iio.imopen(self.path, "w", plugin="pyav")
         self._writer.init_video_stream(self.codec, fps=self.fps)
-        return self
 
     def append(self, linear_rgb: np.ndarray) -> None:
         rgb = to_uint8_srgb(linear_rgb, exposure_stops=self.exposure_stops)
-        self._writer.write_frame(rgb)
+        h, w = rgb.shape[:2]
+        if self._container is None and self._writer is None:
+            self._open(h, w)
+        if (h, w) != self._size:
+            raise ValueError(
+                f"frame size changed mid-stream: {self._size} -> {(h, w)}"
+            )
+        if self._container is None:
+            self._writer.write_frame(rgb)
+            return
+
+        import av
+        # Crop to the even dimensions the stream was opened with.
+        rgb = rgb[:self._stream.height, :self._stream.width]
+        frame = av.VideoFrame.from_ndarray(np.ascontiguousarray(rgb),
+                                           format="rgb24")
+        for packet in self._stream.encode(frame):
+            self._container.mux(packet)
 
     def __exit__(self, *exc):
+        if self._container is not None:
+            # Flush the encoder's buffered frames before closing.
+            try:
+                for packet in self._stream.encode():
+                    self._container.mux(packet)
+            finally:
+                self._container.close()
+                self._container = None
+                self._stream = None
         if self._writer is not None:
             self._writer.close()
             self._writer = None
