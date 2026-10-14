@@ -1,0 +1,141 @@
+{
+  "title": "m51_whirlpool",
+  "schema_version": 1,
+  "shots": [
+    {
+      "id": "m51_wide",
+      "renderer": "spiral_galaxy",
+      "params": {
+        "n_arms": 2,
+        "pitch_deg": 12.0,
+        "arm_strength": 0.85,
+        "arm_width": 0.45,
+        "dust_strength": 2.2,
+        "dust_freq": 10.0,
+        "hii_threshold": 0.22,
+        "hii_freq": 14.0,
+        "inclination_deg": 8.0,
+        "doppler_strength": 0.06,
+        "companion_mass_ratio": 0.0,
+        "bridge_strength": 0.0,
+        "march_steps": 72,
+        "samples": 2,
+        "seed": 1845,
+        "push_in_factor": 1.45
+      },
+      "camera": {
+        "position": [0.0, 0.0, -3.0],
+        "target": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 35.0,
+        "path_to": {
+          "position": [0.05, 0.05, -1.6],
+          "target": [0.0, 0.0, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 30.0
+        }
+      },
+      "palette": { "name": "jwst_nircam", "intensity": 1.0 },
+      "duration_frames": 96,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 1845,
+      "motion_hint": "push_in"
+    },
+    {
+      "id": "m51_arm_closeup",
+      "renderer": "spiral_galaxy",
+      "params": {
+        "n_arms": 2,
+        "pitch_deg": 14.0,
+        "arm_strength": 0.85,
+        "arm_width": 0.40,
+        "dust_strength": 2.8,
+        "dust_freq": 12.0,
+        "hii_threshold": 0.28,
+        "hii_freq": 16.0,
+        "inclination_deg": 30.0,
+        "doppler_strength": 0.08,
+        "companion_mass_ratio": 0.0,
+        "bridge_strength": 0.0,
+        "march_steps": 84,
+        "samples": 2,
+        "seed": 1845
+      },
+      "camera": {
+        "position": [0.4, 0.55, -1.3],
+        "target": [0.25, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 22.0,
+        "path_to": {
+          "position": [0.55, 0.30, -1.0],
+          "target": [0.40, -0.05, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 22.0
+        }
+      },
+      "palette": { "name": "hubble_sii_ha_oiii", "intensity": 1.0 },
+      "duration_frames": 72,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 1845,
+      "motion_hint": "drift"
+    },
+    {
+      "id": "m51_companion_bridge",
+      "renderer": "spiral_galaxy",
+      "params": {
+        "n_arms": 2,
+        "pitch_deg": 12.0,
+        "arm_strength": 0.85,
+        "arm_width": 0.45,
+        "dust_strength": 2.2,
+        "dust_freq": 10.0,
+        "hii_threshold": 0.22,
+        "hii_freq": 14.0,
+        "inclination_deg": 18.0,
+        "doppler_strength": 0.06,
+        "companion_pos": [1.05, 0.05, 0.35],
+        "companion_mass_ratio": 0.5,
+        "bridge_strength": 0.7,
+        "march_steps": 80,
+        "samples": 2,
+        "seed": 1845
+      },
+      "camera": {
+        "position": [0.7, 0.4, -3.0],
+        "target": [0.55, 0.05, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 30.0,
+        "path_to": {
+          "position": [0.55, 0.3, -2.5],
+          "target": [0.55, 0.05, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 30.0
+        }
+      },
+      "palette": { "name": "jwst_nircam", "intensity": 1.0 },
+      "duration_frames": 80,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 1845,
+      "motion_hint": "slow_pan"
+    }
+  ],
+  "transitions": [
+    {
+      "from_shot": "m51_wide",
+      "to_shot": "m51_arm_closeup",
+      "kind": "crossfade",
+      "duration_frames": 16,
+      "params": { "histogram_strength": 0.6, "smoothstep": true }
+    },
+    {
+      "from_shot": "m51_arm_closeup",
+      "to_shot": "m51_companion_bridge",
+      "kind": "crossfade",
+      "duration_frames": 14,
+      "params": { "histogram_strength": 0.55, "smoothstep": true }
+    }
+  ]
+}

@@ -2,6 +2,18 @@
 
 A high-performance Python-based CLI tool and library for Parametric, Stochastic, and Context-Sensitive L-Systems with 3D geometry output.
 
+> **Cinematic sequences:** for the offline '2001'-style sequence renderer
+> (Jupiter approach → Stargate corridor → black hole, up to UHD), see
+> [ODYSSEY_README.md](ODYSSEY_README.md) / `odyssey_director.py`.
+>
+> **Fractal deep dives:** for Mandelbrot / Multibrot zooms far past
+> float64's reach, see [FRACTAL_DIVE_README.md](FRACTAL_DIVE_README.md) /
+> `render/fractal_dive.py`.
+>
+> **Traveller worlds:** for the Foreven sector and the worldmaker /
+> weorold / Erith integrations, see [WORLDS_README.md](WORLDS_README.md)
+> / `worlds/`.
+
 ## Features
 
 - **Parametric L-Systems**: Support for numerical parameters and arithmetic expressions

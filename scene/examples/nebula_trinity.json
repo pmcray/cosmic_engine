@@ -1,0 +1,125 @@
+{
+  "title": "nebula_trinity",
+  "schema_version": 1,
+  "shots": [
+    {
+      "id": "pillars_of_creation",
+      "renderer": "diffuse_nebula",
+      "params": {
+        "topology": "pillars",
+        "R_bound": 1.4,
+        "intensity": 1.0,
+        "dust_strength": 1.2,
+        "detail_strength": 1.0,
+        "erosion_height": 0.25,
+        "erosion_decay": 2.2,
+        "march_steps": 84,
+        "samples": 2,
+        "seed": 1611,
+        "push_in_factor": 1.45
+      },
+      "camera": {
+        "position": [0.05, -0.45, -2.6],
+        "target": [0.0, 0.1, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 36.0,
+        "path_to": {
+          "position": [0.20, -0.30, -1.7],
+          "target": [0.05, 0.05, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 32.0
+        }
+      },
+      "palette": { "name": "hubble_sii_ha_oiii", "intensity": 1.0 },
+      "duration_frames": 96,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 1611,
+      "motion_hint": "push_in"
+    },
+    {
+      "id": "crab_remnant",
+      "renderer": "diffuse_nebula",
+      "params": {
+        "topology": "crab",
+        "R_bound": 1.5,
+        "intensity": 1.0,
+        "dust_strength": 0.6,
+        "detail_strength": 1.0,
+        "R_shell": 1.0,
+        "shell_thickness": 0.18,
+        "march_steps": 80,
+        "samples": 2,
+        "seed": 1054
+      },
+      "camera": {
+        "position": [0.0, 0.0, -3.0],
+        "target": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 38.0,
+        "path_to": {
+          "position": [0.10, 0.05, -2.4],
+          "target": [0.0, 0.0, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 36.0
+        }
+      },
+      "palette": { "name": "jwst_nircam", "intensity": 1.0 },
+      "duration_frames": 72,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 1054,
+      "motion_hint": "drift"
+    },
+    {
+      "id": "helix_planetary",
+      "renderer": "diffuse_nebula",
+      "params": {
+        "topology": "helix",
+        "R_bound": 1.4,
+        "intensity": 1.0,
+        "dust_strength": 0.4,
+        "detail_strength": 1.0,
+        "R_torus": 0.7,
+        "r_torus": 0.18,
+        "march_steps": 76,
+        "samples": 2,
+        "seed": 7293
+      },
+      "camera": {
+        "position": [0.25, 0.6, -2.4],
+        "target": [0.0, 0.0, 0.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 34.0,
+        "path_to": {
+          "position": [0.40, 0.45, -2.0],
+          "target": [0.0, 0.0, 0.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 32.0
+        }
+      },
+      "palette": { "name": "hubble_sii_ha_oiii", "intensity": 1.0 },
+      "duration_frames": 80,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 7293,
+      "motion_hint": "slow_pan"
+    }
+  ],
+  "transitions": [
+    {
+      "from_shot": "pillars_of_creation",
+      "to_shot": "crab_remnant",
+      "kind": "crossfade",
+      "duration_frames": 16,
+      "params": { "histogram_strength": 0.6, "smoothstep": true }
+    },
+    {
+      "from_shot": "crab_remnant",
+      "to_shot": "helix_planetary",
+      "kind": "crossfade",
+      "duration_frames": 14,
+      "params": { "histogram_strength": 0.55, "smoothstep": true }
+    }
+  ]
+}

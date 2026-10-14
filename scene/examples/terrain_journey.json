@@ -1,0 +1,87 @@
+{
+  "title": "terrain_journey",
+  "schema_version": 1,
+  "shots": [
+    {
+      "id": "alpine_ridge",
+      "renderer": "terrain",
+      "params": {
+        "terrain_amplitude": 1.6,
+        "terrain_freq": 0.05,
+        "octaves": 8,
+        "snow_line": 0.65,
+        "water_level": -0.2,
+        "water_enable": 1,
+        "sun_dir": [0.45, 0.6, -0.7],
+        "haze_strength": 0.55,
+        "max_dist": 90.0,
+        "march_steps": 150,
+        "samples": 1,
+        "seed": 11
+      },
+      "camera": {
+        "position": [-3.0, 1.2, -6.0],
+        "target": [2.0, 0.6, 4.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 55.0,
+        "path_to": {
+          "position": [1.5, 1.4, -3.5],
+          "target": [4.5, 0.8, 4.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 50.0
+        }
+      },
+      "palette": { "name": "trumbull_2001", "intensity": 1.0 },
+      "duration_frames": 96,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 11,
+      "motion_hint": "fly_through"
+    },
+    {
+      "id": "alien_desert",
+      "renderer": "terrain",
+      "params": {
+        "terrain_amplitude": 1.0,
+        "terrain_freq": 0.08,
+        "octaves": 6,
+        "snow_line": 5.0,
+        "water_level": -10.0,
+        "water_enable": 0,
+        "sun_dir": [0.65, 0.30, -0.6],
+        "haze_strength": 0.75,
+        "max_dist": 110.0,
+        "march_steps": 140,
+        "samples": 1,
+        "seed": 27
+      },
+      "camera": {
+        "position": [-6.0, 1.0, -3.0],
+        "target": [3.0, 0.4, 5.0],
+        "up": [0.0, 1.0, 0.0],
+        "fov_deg": 50.0,
+        "path_to": {
+          "position": [-2.0, 1.1, -1.0],
+          "target": [5.0, 0.4, 5.0],
+          "up": [0.0, 1.0, 0.0],
+          "fov_deg": 48.0
+        }
+      },
+      "palette": { "name": "jwst_nircam", "intensity": 1.0 },
+      "duration_frames": 80,
+      "fps": 24,
+      "resolution": [1280, 720],
+      "seed": 27,
+      "motion_hint": "pan"
+    }
+  ],
+  "transitions": [
+    {
+      "from_shot": "alpine_ridge",
+      "to_shot": "alien_desert",
+      "kind": "crossfade",
+      "duration_frames": 18,
+      "params": { "histogram_strength": 0.6, "smoothstep": true }
+    }
+  ]
+}
