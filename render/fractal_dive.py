@@ -56,6 +56,85 @@ except Exception:  # pragma: no cover - GPU-only dep
     _HAS_TAICHI = False
 
 
+def is_taichi_initialized() -> bool:
+    """Return True if Taichi runtime has been initialized."""
+    if not _HAS_TAICHI:
+        return False
+    try:
+        return ti.lang.impl.get_runtime().prog is not None
+    except Exception:
+        return False
+
+
+def get_taichi_arch():
+    """Return the active Taichi Arch, or None if uninitialized."""
+    if not is_taichi_initialized():
+        return None
+    try:
+        return ti.lang.impl.current_cfg().arch
+    except Exception:
+        return None
+
+
+def has_cuda() -> bool:
+    """Return True if Taichi has CUDA support available on this host."""
+    if not _HAS_TAICHI:
+        return False
+    try:
+        if hasattr(ti, "_lib") and hasattr(ti._lib.core, "with_cuda"):
+            return bool(ti._lib.core.with_cuda())
+    except Exception:
+        pass
+    return False
+
+
+def arch_supports_f64(arch=None) -> bool:
+    """Return True if the specified (or active) Taichi arch supports f64.
+    CPU (x64/arm64) and CUDA support f64. SPIR-V / Vulkan / Metal / OpenGL do not."""
+    if not _HAS_TAICHI:
+        return False
+    if arch is None:
+        arch = get_taichi_arch()
+    if arch is None:
+        return False
+    try:
+        if arch in (getattr(ti, "cpu", None), getattr(ti, "x64", None),
+                    getattr(ti, "arm64", None), getattr(ti, "cuda", None)):
+            return True
+        name = ""
+        if hasattr(ti, "_lib") and hasattr(ti._lib.core, "arch_name"):
+            name = ti._lib.core.arch_name(arch).lower()
+        else:
+            name = str(arch).lower()
+        if "vulkan" in name or "metal" in name or "opengl" in name or "gles" in name:
+            return False
+        return "cuda" in name or "x64" in name or "arm" in name or "cpu" in name
+    except Exception:
+        return False
+
+
+def ensure_taichi_f64() -> bool:
+    """Ensure Taichi is initialized on an arch that supports f64.
+    If Taichi is uninitialized:
+      - Uses CUDA if available.
+      - Otherwise initializes on ti.cpu (x64).
+    If Taichi is already initialized:
+      - Checks if active arch supports f64.
+    Returns True if Taichi is initialized on an f64-capable arch, False otherwise.
+    """
+    if not _HAS_TAICHI:
+        return False
+    if not is_taichi_initialized():
+        if has_cuda():
+            try:
+                ti.init(arch=ti.cuda)
+            except Exception:
+                ti.init(arch=ti.cpu)
+        else:
+            ti.init(arch=ti.cpu)
+    return arch_supports_f64()
+
+
 # A classic deep-dive location on the seahorse-valley spiral: structure
 # at every depth, never escapes early.
 DEFAULT_CENTER_RE = "-0.743643887037158704752191506114774"
@@ -327,13 +406,28 @@ if _HAS_TAICHI:
         def __init__(self, width: int, height: int, orbit: ReferenceOrbit):
             self.width = int(width)
             self.height = int(height)
+            self.orbit = orbit
+            self.power = orbit.power
+            self._use_fallback = False
+
+            f64_ok = ensure_taichi_f64()
+            if not f64_ok:
+                # Active arch (e.g. Vulkan) does not support f64 and CUDA is unavailable.
+                # Fall back cleanly to perturbation_grid.
+                self._use_fallback = True
+                self._n_ref = len(orbit)
+                return
+
             self.set_orbit(orbit)
             self.mu = ti.field(dtype=ti.f32, shape=(self.height, self.width))
             self._binom = ti.field(dtype=ti.f64, shape=max(3, orbit.power + 1))
 
         def set_orbit(self, orbit: ReferenceOrbit) -> None:
+            self.orbit = orbit
             self.power = orbit.power
             self._n_ref = len(orbit)
+            if getattr(self, "_use_fallback", False):
+                return
             self._zr = ti.field(dtype=ti.f64, shape=self._n_ref)
             self._zi = ti.field(dtype=ti.f64, shape=self._n_ref)
             self._zr.from_numpy(orbit.z.real.copy())
@@ -342,15 +436,29 @@ if _HAS_TAICHI:
         def compute_mu(self, scale: float, rotation: float,
                        max_iter: int, escape_radius: float = 64.0,
                        sub_dx: float = 0.0, sub_dy: float = 0.0) -> np.ndarray:
-            b = _binoms(self.power)
-            for k in range(self.power + 1):
-                self._binom[k] = float(b[k])
-            self._kernel(float(scale), float(rotation), int(max_iter),
-                         float(escape_radius) ** 2,
-                         math.log(float(escape_radius)),
-                         math.log(float(self.power)),
-                         float(sub_dx), float(sub_dy))
-            return self.mu.to_numpy()
+            if getattr(self, "_use_fallback", False):
+                dc = pixel_deltas(self.width, self.height, scale, rotation,
+                                  sub_dx, sub_dy)
+                return perturbation_grid(self.orbit, dc, max_iter, escape_radius).astype(np.float32)
+
+            try:
+                b = _binoms(self.power)
+                for k in range(self.power + 1):
+                    self._binom[k] = float(b[k])
+                self._kernel(float(scale), float(rotation), int(max_iter),
+                             float(escape_radius) ** 2,
+                             math.log(float(escape_radius)),
+                             math.log(float(self.power)),
+                             float(sub_dx), float(sub_dy))
+                return self.mu.to_numpy()
+            except Exception as e:
+                # Catch f64 compilation or execution failures on non-supporting arches
+                if "f64" in str(e).lower() or "not supported" in str(e).lower():
+                    self._use_fallback = True
+                    dc = pixel_deltas(self.width, self.height, scale, rotation,
+                                      sub_dx, sub_dy)
+                    return perturbation_grid(self.orbit, dc, max_iter, escape_radius).astype(np.float32)
+                raise
 
         @ti.kernel
         def _kernel(self, scale: ti.f64, rotation: ti.f64, max_iter: ti.i32,

@@ -16,15 +16,23 @@ from scene.manifest import Shot, Camera
 from .core import Renderer, register_renderer
 
 
-def _ensure_taichi():
+def _ensure_taichi(need_f64: bool = False):
     import taichi as ti
+    from render import fractal_dive as fd
     if not getattr(_ensure_taichi, "_initialized", False):
-        try:
-            ti.init(arch=ti.gpu)
-        except Exception:
+        if fd.is_taichi_initialized():
+            _ensure_taichi._initialized = True
+            return ti
+        if need_f64 and not fd.has_cuda():
             ti.init(arch=ti.cpu)
+        else:
+            try:
+                ti.init(arch=ti.gpu)
+            except Exception:
+                ti.init(arch=ti.cpu)
         _ensure_taichi._initialized = True
     return ti
+
 
 
 @register_renderer("exotic_physics")
@@ -925,9 +933,24 @@ class FractalDiveRenderer(Renderer):
         engine = p.get("engine", "auto")
         self._engine = None
         if engine in ("auto", "taichi") and fd._HAS_TAICHI:
-            _ensure_taichi()
-            self._engine = fd.FractalDiveEngine(self.width, self.height,
-                                                self._orbit)
+            _ensure_taichi(need_f64=True)
+            active_arch = fd.get_taichi_arch()
+            arch_f64 = fd.arch_supports_f64(active_arch)
+            if not arch_f64 and engine == "auto":
+                # Vulkan or other backend without f64 support: fall back cleanly
+                # to perturbation_grid so shots render without crashing.
+                self._engine = None
+            else:
+                try:
+                    self._engine = fd.FractalDiveEngine(self.width, self.height,
+                                                        self._orbit)
+                    if getattr(self._engine, "_use_fallback", False) and engine == "auto":
+                        self._engine = None
+                except Exception as e:
+                    if engine == "auto" and ("f64" in str(e).lower() or "not supported" in str(e).lower()):
+                        self._engine = None
+                    else:
+                        raise
         elif engine == "taichi":
             raise RuntimeError("fractal_dive: taichi engine requested "
                                "but taichi is not installed")
@@ -942,9 +965,18 @@ class FractalDiveRenderer(Renderer):
         acc = np.zeros((self.height, self.width, 3), dtype=np.float64)
         offsets = fd.supersample_offsets(self._samples)
         for (dx, dy) in offsets:
-            if self._engine is not None:
-                mu = self._engine.compute_mu(scale, rotation, max_iter,
-                                             self._escape_radius, dx, dy)
+            if self._engine is not None and not getattr(self._engine, "_use_fallback", False):
+                try:
+                    mu = self._engine.compute_mu(scale, rotation, max_iter,
+                                                 self._escape_radius, dx, dy)
+                except Exception as e:
+                    if "f64" in str(e).lower() or "not supported" in str(e).lower():
+                        dc = fd.pixel_deltas(self.width, self.height, scale,
+                                             rotation, dx, dy)
+                        mu = fd.perturbation_grid(self._orbit, dc, max_iter,
+                                                  self._escape_radius)
+                    else:
+                        raise
             else:
                 dc = fd.pixel_deltas(self.width, self.height, scale,
                                      rotation, dx, dy)

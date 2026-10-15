@@ -108,7 +108,13 @@ def _try_imports():
         backends["pil"] = Image
     except Exception:
         pass
+    try:
+        import cv2  # type: ignore
+        backends["cv2"] = cv2
+    except Exception:
+        pass
     return backends
+
 
 
 def write_exr(path: str | Path, linear_rgb: np.ndarray) -> None:
@@ -181,15 +187,16 @@ class VideoWriter:
         self._container = None
         self._stream = None
         self._writer = None          # imageio fallback
+        self._cv2_writer = None      # cv2 fallback
         self._size = None
 
     def __enter__(self):
         backends = _try_imports()
-        if "av" in backends or "imageio" in backends:
+        if "av" in backends or "imageio" in backends or "cv2" in backends:
             return self
         raise RuntimeError(
-            "VideoWriter needs PyAV (pip install av) or imageio "
-            "(pip install imageio[ffmpeg])"
+            "VideoWriter needs PyAV (pip install av), imageio "
+            "(pip install imageio[ffmpeg]), or opencv-python"
         )
 
     def _open(self, height: int, width: int) -> None:
@@ -205,19 +212,34 @@ class VideoWriter:
             self._stream.height = height - (height % 2)
             self._stream.pix_fmt = "yuv420p"
             return
-        iio = backends["imageio"]
-        self._writer = iio.imopen(self.path, "w", plugin="pyav")
-        self._writer.init_video_stream(self.codec, fps=self.fps)
+        if "imageio" in backends:
+            try:
+                iio = backends["imageio"]
+                self._writer = iio.imopen(self.path, "w", plugin="pyav")
+                self._writer.init_video_stream(self.codec, fps=self.fps)
+                return
+            except Exception:
+                pass
+        cv2 = backends.get("cv2")
+        if cv2 is not None:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            self._cv2_writer = cv2.VideoWriter(self.path, fourcc, float(self.fps), (width, height))
+            return
 
     def append(self, linear_rgb: np.ndarray) -> None:
         rgb = to_uint8_srgb(linear_rgb, exposure_stops=self.exposure_stops)
         h, w = rgb.shape[:2]
-        if self._container is None and self._writer is None:
+        if self._container is None and self._writer is None and self._cv2_writer is None:
             self._open(h, w)
         if (h, w) != self._size:
             raise ValueError(
                 f"frame size changed mid-stream: {self._size} -> {(h, w)}"
             )
+        if self._cv2_writer is not None:
+            import cv2
+            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            self._cv2_writer.write(bgr)
+            return
         if self._container is None:
             self._writer.write_frame(rgb)
             return
@@ -243,4 +265,7 @@ class VideoWriter:
         if self._writer is not None:
             self._writer.close()
             self._writer = None
+        if self._cv2_writer is not None:
+            self._cv2_writer.release()
+            self._cv2_writer = None
         return False

@@ -294,6 +294,36 @@ class OdysseyDirector:
         print(f"Wrote {out_path}")
 
 
+def clean_teardown(exit_code: int = 0):
+    """Clean teardown for Taichi and process exit.
+
+    On Linux systems where Taichi runs on Vulkan (e.g. Mesa driver with Intel/AMD
+    integrated GPUs without CUDA), Mesa registers thread-local / atexit destructors
+    that crash with a segmentation fault during standard Python C-runtime exit handlers
+    (__run_exit_handlers -> atexit_thread.cc).
+    To ensure clean exit after successfully completing operations:
+    1. Flush stdout and stderr.
+    2. If running on Vulkan, terminate cleanly using os._exit(exit_code) to bypass
+       the problematic driver destructor segfault.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if ti is not None:
+        try:
+            if ti.lang.impl.get_runtime().prog is not None:
+                cfg = ti.lang.impl.current_cfg()
+                arch = cfg.arch if cfg else None
+                arch_name = (
+                    ti._lib.core.arch_name(arch).lower()
+                    if hasattr(ti, "_lib") and hasattr(ti._lib.core, "arch_name")
+                    else str(arch).lower()
+                )
+                if "vulkan" in arch_name or arch == getattr(ti, "vulkan", None):
+                    os._exit(exit_code)
+        except Exception:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Render a '2001'-flavoured cosmic sequence (headless, up to UHD)")
@@ -341,6 +371,7 @@ def main():
 
     if args.still is not None:
         director.render_still(args.still, args.still_out)
+        clean_teardown(0)
         return
 
     if not args.output and not args.frames_dir:
@@ -350,6 +381,9 @@ def main():
                  start_frame=args.start_frame, end_frame=args.end_frame,
                  overwrite=args.overwrite)
 
+    clean_teardown(0)
+
 
 if __name__ == "__main__":
     main()
+
