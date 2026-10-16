@@ -23,13 +23,13 @@ def _ensure_taichi(need_f64: bool = False):
         if fd.is_taichi_initialized():
             _ensure_taichi._initialized = True
             return ti
-        if need_f64 and not fd.has_cuda():
-            ti.init(arch=ti.cpu)
-        else:
+        if fd.has_cuda():
             try:
-                ti.init(arch=ti.gpu)
+                ti.init(arch=ti.cuda)
             except Exception:
                 ti.init(arch=ti.cpu)
+        else:
+            ti.init(arch=ti.cpu)
         _ensure_taichi._initialized = True
     return ti
 
@@ -911,12 +911,24 @@ class FractalDiveRenderer(Renderer):
 
         p = shot.params
         self._fd = fd
-        self._center_re_str = str(p.get("center_re", fd.DEFAULT_CENTER_RE))
-        self._center_im_str = str(p.get("center_im", fd.DEFAULT_CENTER_IM))
+        loc_name = p.get("location")
+        loc_cre, loc_cim, loc_power = fd.DEFAULT_CENTER_RE, fd.DEFAULT_CENTER_IM, 2.0
+        if loc_name:
+            from studio.voyage_composer import FRACTAL_LOCATIONS
+            locs = {
+                name: (cre, cim, pw)
+                for name, cre, cim, pw in list(FRACTAL_LOCATIONS) + list(fd.HEPTABROT_LOCATIONS)
+            }
+            if loc_name not in locs:
+                raise ValueError(f"unknown fractal_dive location {loc_name!r}; available: {sorted(locs)}")
+            loc_cre, loc_cim, loc_power = locs[loc_name]
+
+        self._center_re_str = str(p.get("center_re", loc_cre))
+        self._center_im_str = str(p.get("center_im", loc_cim))
         self._center_re = float(self._center_re_str)
         self._center_im = float(self._center_im_str)
 
-        base_power = float(p.get("power", 2.0))
+        base_power = float(p.get("power", loc_power))
         self._power_start = float(p.get("power_start", base_power))
         self._power_end = float(p.get("power_end", self._power_start))
         self._power = self._power_start

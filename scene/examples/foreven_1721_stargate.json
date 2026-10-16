@@ -1,0 +1,210 @@
+{
+  "shots": [
+    {
+      "id": "world_1721_Calandron",
+      "renderer": "volumetric_gas_giant",
+      "params": {
+        "atm_thickness": 0.08438340693768566,
+        "march_steps": 24,
+        "samples": 2,
+        "sun_dir": [
+          -0.7006770720902513,
+          0.6411549000378385,
+          -0.3130048478929713
+        ],
+        "grs_lon": 77.11535365075429,
+        "seed": 346283,
+        "push_in_factor": 1.2523779440352658,
+        "world": {
+          "name": "Calandron",
+          "uwp": "E522252-2",
+          "sector": "Foreven",
+          "hex": "1721",
+          "subsector": "K",
+          "body_type": "gas_giant",
+          "mean_temp_k": 377.1,
+          "star": "M9 V",
+          "provider": "procedural",
+          "has_gas_giant": true,
+          "gas_giant_count": 2,
+          "parent_body": "Calandron Prime",
+          "parent_body_type": "gas_giant"
+        }
+      },
+      "camera": {
+        "position": [
+          -0.11914524795428694,
+          -0.1465543236452549,
+          -4.246158102655107
+        ],
+        "target": [
+          0.0,
+          0.026783981386163974,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 36.91189146175526,
+        "path_to": {
+          "position": [
+            -0.09535235287372623,
+            -0.14805567687232554,
+            -2.461247298564011
+          ],
+          "target": [
+            0.0,
+            0.11721743660087355,
+            0.0
+          ],
+          "up": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "fov_deg": 30.05687819925008,
+          "path_to": null
+        }
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 72,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 346283,
+      "motion_hint": "push_in"
+    },
+    {
+      "id": "de_moivre_irruption",
+      "renderer": "fractal_dive",
+      "params": {
+        "center_re": "-0.625",
+        "center_im": "0.015",
+        "power_start": 2.0,
+        "power_end": 7.0,
+        "scale_start": 1.6,
+        "scale_end": 0.05,
+        "rotation_deg_start": 0.0,
+        "rotation_deg_total": 60.0,
+        "samples": 2,
+        "iter_base": 240,
+        "iter_per_decade": 180,
+        "color_cycles": 4.5,
+        "color_phase": 0.0,
+        "direct": true
+      },
+      "camera": {
+        "position": [
+          0.0,
+          0.0,
+          -5.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 50.0,
+        "path_to": null
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 72,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 1977,
+      "motion_hint": "morph_dive"
+    },
+    {
+      "id": "heptabrot_fort",
+      "renderer": "fractal_dive",
+      "params": {
+        "location": "heptabrot_fort",
+        "center_re": "0.63520827949716101850031274409134268375",
+        "center_im": "0.00243353250872518039829854668518353625",
+        "power": 7,
+        "scale_start": 0.01,
+        "scale_end": 1e-10,
+        "rotation_deg_start": 60.0,
+        "rotation_deg_total": 90.0,
+        "samples": 2,
+        "iter_base": 400,
+        "iter_per_decade": 400,
+        "color_cycles": 5.0,
+        "color_phase": 0.0
+      },
+      "camera": {
+        "position": [
+          0.0,
+          0.0,
+          -5.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 50.0,
+        "path_to": null
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 72,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 1977,
+      "motion_hint": "deep_dive"
+    }
+  ],
+  "transitions": [
+    {
+      "from_shot": "world_1721_Calandron",
+      "to_shot": "de_moivre_irruption",
+      "kind": "crossfade",
+      "duration_frames": 12,
+      "params": {
+        "histogram_strength": 0.65,
+        "smoothstep": true
+      }
+    },
+    {
+      "from_shot": "de_moivre_irruption",
+      "to_shot": "heptabrot_fort",
+      "kind": "crossfade",
+      "duration_frames": 12,
+      "params": {
+        "histogram_strength": 0.65,
+        "smoothstep": true
+      }
+    }
+  ],
+  "title": "foreven_1721_stargate",
+  "schema_version": 1
+}
