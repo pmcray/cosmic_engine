@@ -580,6 +580,8 @@ def t_odyssey_infinite_finale(rng: random.Random):
 # every depth; the digit count bounds how deep that centre can be pushed
 # before the reference orbit needs re-deriving.
 
+from render.fractal_dive import HEPTABROT_LOCATIONS
+
 FRACTAL_LOCATIONS = (
     # (name, center_re, center_im, power)
     # Each centre was bisected at high precision until its orbit survives
@@ -610,7 +612,7 @@ FRACTAL_LOCATIONS = (
     ("multibrot_5",
      "0.7892825805319152899034950303947405545",
      "-0.658215581388023392607858154002439068", 5),
-)
+) + HEPTABROT_LOCATIONS
 
 
 def _fractal_location(rng: random.Random):
@@ -658,6 +660,28 @@ def t_fractal_dive_shallow(rng: random.Random):
     }
     palette = rng.choice(["trumbull_2001", "hubble_sii_ha_oiii"])
     return ("fractal_dive", params, Camera(), "push_in", palette)
+
+
+def t_fractal_morph(rng: random.Random):
+    """Continuous fractional exponent morphing ($z^p + c$ for $p \\in \\mathbb{R}$)
+    around the negative real axis branch cut as lobes tear open and multiply."""
+    p_start = _r(rng, 2.0, 3.0)
+    p_end = _r(rng, 5.5, 7.5)
+    params = {
+        "center_re": "-0.75",
+        "center_im": "0.02",
+        "power_start": p_start,
+        "power_end": p_end,
+        "scale_start": _r(rng, 1.4, 1.8),
+        "scale_end": _r(rng, 0.04, 0.12),
+        "rotation_deg_total": _r(rng, -45.0, 45.0),
+        "samples": 2,
+        "color_cycles": _r(rng, 3.0, 5.5),
+        "color_phase": _r(rng, 0.0, 1.0),
+        "seed": _ri(rng, 0, 999_999),
+    }
+    palette = rng.choice(["trumbull_2001", "hubble_sii_ha_oiii"])
+    return ("fractal_dive", params, Camera(), "morph_zoom", palette)
 
 
 # ---- Traveller world phrases ----------------------------------------

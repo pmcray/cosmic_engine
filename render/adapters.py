@@ -873,16 +873,21 @@ class OdysseyInfiniteRenderer(Renderer):
 
 @register_renderer("fractal_dive")
 class FractalDiveRenderer(Renderer):
-    """Mandelbrot / Multibrot deep dive via perturbation theory
-    (render.fractal_dive). Exponential zoom from scale_start to
-    scale_end over the shot; fully deterministic (fixed supersampling
-    grid, no RNG). Runs on the Taichi f64 engine when Taichi is
-    available, else on the vectorised numpy engine.
+    """Mandelbrot / Multibrot deep dive via perturbation theory or direct
+    polar De Moivre evaluation (render.fractal_dive). Exponential zoom
+    from scale_start to scale_end (and optional continuous exponent
+    morphing from power_start to power_end) over the shot; fully
+    deterministic (fixed supersampling grid, no RNG). Runs on the Taichi
+    f64 engine when Taichi is available, else on the vectorised numpy
+    engine.
 
     Expected params (all optional):
         center_re, center_im : dive centre as decimal strings — supply
                                enough digits for the target depth
-        power                : Multibrot exponent d >= 2 (default 2)
+        power                : Multibrot exponent p > 1 (float or int, default 2)
+        power_start, power_end : animated fractional exponent range across
+                               the shot (defaults to `power`)
+        direct               : bool, force direct polar De Moivre kernel
         scale_start          : viewport half-height at t=0 (default 1.8)
         scale_end            : ... at t=1 (default 1e-12)
         rotation_deg_start   : frame rotation at t=0 (default 0)
@@ -906,7 +911,22 @@ class FractalDiveRenderer(Renderer):
 
         p = shot.params
         self._fd = fd
-        self._power = int(p.get("power", 2))
+        self._center_re_str = str(p.get("center_re", fd.DEFAULT_CENTER_RE))
+        self._center_im_str = str(p.get("center_im", fd.DEFAULT_CENTER_IM))
+        self._center_re = float(self._center_re_str)
+        self._center_im = float(self._center_im_str)
+
+        base_power = float(p.get("power", 2.0))
+        self._power_start = float(p.get("power_start", base_power))
+        self._power_end = float(p.get("power_end", self._power_start))
+        self._power = self._power_start
+        self._morphing_power = abs(self._power_end - self._power_start) > 1e-9
+        self._direct = bool(
+            p.get("direct", False)
+            or self._morphing_power
+            or not fd.is_integer_power(self._power_start)
+        )
+
         self._scale_start = float(p.get("scale_start", 1.8))
         self._scale_end = float(p.get("scale_end", 1e-12))
         self._rot0 = float(p.get("rotation_deg_start", 0.0)) * np.pi / 180.0
@@ -922,13 +942,16 @@ class FractalDiveRenderer(Renderer):
 
         deepest = min(self._scale_start, self._scale_end)
         budget = fd.iter_budget(deepest, self._iter_base, self._iter_per_decade)
-        self._orbit = fd.ReferenceOrbit(
-            str(p.get("center_re", fd.DEFAULT_CENTER_RE)),
-            str(p.get("center_im", fd.DEFAULT_CENTER_IM)),
-            power=self._power,
-            max_iter=budget,
-            precision=fd.required_precision(deepest),
-        )
+        if self._direct:
+            self._orbit = None
+        else:
+            self._orbit = fd.ReferenceOrbit(
+                self._center_re_str,
+                self._center_im_str,
+                power=int(round(self._power_start)),
+                max_iter=budget,
+                precision=fd.required_precision(deepest),
+            )
 
         engine = p.get("engine", "auto")
         self._engine = None
@@ -938,12 +961,17 @@ class FractalDiveRenderer(Renderer):
             arch_f64 = fd.arch_supports_f64(active_arch)
             if not arch_f64 and engine == "auto":
                 # Vulkan or other backend without f64 support: fall back cleanly
-                # to perturbation_grid so shots render without crashing.
+                # to numpy grids so shots render without crashing.
                 self._engine = None
             else:
                 try:
-                    self._engine = fd.FractalDiveEngine(self.width, self.height,
-                                                        self._orbit)
+                    self._engine = fd.FractalDiveEngine(
+                        self.width, self.height, self._orbit,
+                        power=self._power_start,
+                        center_re=self._center_re,
+                        center_im=self._center_im,
+                        direct=self._direct,
+                    )
                     if getattr(self._engine, "_use_fallback", False) and engine == "auto":
                         self._engine = None
                 except Exception as e:
@@ -958,6 +986,7 @@ class FractalDiveRenderer(Renderer):
     def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
         fd = self._fd
         scale = fd.dive_scale(t, self._scale_start, self._scale_end)
+        power = fd.dive_power(t, self._power_start, self._power_end)
         rotation = self._rot0 + t * self._rot_total
         max_iter = fd.iter_budget(scale, self._iter_base,
                                   self._iter_per_decade)
@@ -965,23 +994,47 @@ class FractalDiveRenderer(Renderer):
         acc = np.zeros((self.height, self.width, 3), dtype=np.float64)
         offsets = fd.supersample_offsets(self._samples)
         for (dx, dy) in offsets:
-            if self._engine is not None and not getattr(self._engine, "_use_fallback", False):
-                try:
-                    mu = self._engine.compute_mu(scale, rotation, max_iter,
-                                                 self._escape_radius, dx, dy)
-                except Exception as e:
-                    if "f64" in str(e).lower() or "not supported" in str(e).lower():
-                        dc = fd.pixel_deltas(self.width, self.height, scale,
-                                             rotation, dx, dy)
-                        mu = fd.perturbation_grid(self._orbit, dc, max_iter,
-                                                  self._escape_radius)
-                    else:
-                        raise
+            if self._direct:
+                if self._engine is not None and not getattr(self._engine, "_use_fallback", False):
+                    try:
+                        mu = self._engine.compute_mu_direct(
+                            self._center_re, self._center_im, power,
+                            scale, rotation, max_iter,
+                            self._escape_radius, dx, dy,
+                        )
+                    except Exception as e:
+                        if "f64" in str(e).lower() or "not supported" in str(e).lower():
+                            dc = fd.pixel_deltas(self.width, self.height, scale,
+                                                 rotation, dx, dy)
+                            c = complex(self._center_re, self._center_im) + dc
+                            mu = fd.direct_grid(c, power, max_iter,
+                                                self._escape_radius)
+                        else:
+                            raise
+                else:
+                    dc = fd.pixel_deltas(self.width, self.height, scale,
+                                         rotation, dx, dy)
+                    c = complex(self._center_re, self._center_im) + dc
+                    mu = fd.direct_grid(c, power, max_iter,
+                                        self._escape_radius)
             else:
-                dc = fd.pixel_deltas(self.width, self.height, scale,
-                                     rotation, dx, dy)
-                mu = fd.perturbation_grid(self._orbit, dc, max_iter,
-                                          self._escape_radius)
+                if self._engine is not None and not getattr(self._engine, "_use_fallback", False):
+                    try:
+                        mu = self._engine.compute_mu(scale, rotation, max_iter,
+                                                     self._escape_radius, dx, dy)
+                    except Exception as e:
+                        if "f64" in str(e).lower() or "not supported" in str(e).lower():
+                            dc = fd.pixel_deltas(self.width, self.height, scale,
+                                                 rotation, dx, dy)
+                            mu = fd.perturbation_grid(self._orbit, dc, max_iter,
+                                                      self._escape_radius)
+                        else:
+                            raise
+                else:
+                    dc = fd.pixel_deltas(self.width, self.height, scale,
+                                         rotation, dx, dy)
+                    mu = fd.perturbation_grid(self._orbit, dc, max_iter,
+                                              self._escape_radius)
             acc += fd.colorize(mu, self._anchors, self._color_cycles,
                                self._color_phase, self._interior)
         return (acc / len(offsets)).astype(np.float32)

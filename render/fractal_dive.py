@@ -140,9 +140,28 @@ def ensure_taichi_f64() -> bool:
 DEFAULT_CENTER_RE = "-0.743643887037158704752191506114774"
 DEFAULT_CENTER_IM = "0.131825904205311970493132056385139"
 
+# Deep degree-7 Multibrot (Heptabrot, z -> z^7 + c) boundary coordinates
+# bisected in arbitrary precision to survive >5,000 iterations while
+# exhibiting 6-lobed 'fort' and 7-fold filament structure down to 1e-18.
+HEPTABROT_LOCATIONS = (
+    ("heptabrot_fort",
+     "0.63520827949716101850031274409134268375",
+     "0.00243353250872518039829854668518353625", 7),
+    ("heptabrot_filament",
+     "-0.31131455252020846674129076122239521",
+     "0.538781289728671059509626499605337474", 7),
+)
+
+
+def is_integer_power(power: float) -> bool:
+    """Return True if `power` is an integer >= 2 within floating-point tolerance."""
+    p_f = float(power)
+    p_i = int(round(p_f))
+    return p_i >= 2 and abs(p_f - p_i) < 1e-9
+
 
 # ============================================================
-# Reference orbit (arbitrary precision, CPU)
+# Reference orbit & boundary bisection (arbitrary precision, CPU)
 # ============================================================
 
 def required_precision(scale: float) -> int:
@@ -167,9 +186,9 @@ class ReferenceOrbit:
                  max_iter: int = 2048,
                  precision: int = 60,
                  escape_radius: float = 1e10):
-        if power < 2 or power != int(power):
+        if not is_integer_power(power):
             raise ValueError(f"power must be an integer >= 2, got {power}")
-        self.power = int(power)
+        self.power = int(round(float(power)))
         self.center_re = str(center_re)
         self.center_im = str(center_im)
         self.max_iter = int(max_iter)
@@ -199,8 +218,38 @@ class ReferenceOrbit:
         return len(self.z)
 
 
+def bisect_boundary(c_in_re: str, c_in_im: str,
+                    c_out_re: str, c_out_im: str,
+                    power: int = 7,
+                    min_iter: int = 5000,
+                    steps: int = 48,
+                    precision: int = 65) -> tuple[str, str]:
+    """High-precision binary bisection along the segment from an interior
+    (or long-surviving) point `(c_in_re, c_in_im)` to an exterior escaping
+    point `(c_out_re, c_out_im)` for $z \\mapsto z^{\\text{power}} + c$.
+
+    Returns `(center_re, center_im)` as decimal strings pinched onto the
+    boundary while surviving at least `min_iter` iterations.
+    """
+    with localcontext() as ctx:
+        ctx.prec = int(precision)
+        ar, ai = Decimal(str(c_in_re)), Decimal(str(c_in_im))
+        br, bi = Decimal(str(c_out_re)), Decimal(str(c_out_im))
+        half = Decimal("0.5")
+        for _ in range(int(steps)):
+            mr = (ar + br) * half
+            mi = (ai + bi) * half
+            orb = ReferenceOrbit(str(mr), str(mi), power=power,
+                                 max_iter=min_iter, precision=precision)
+            if len(orb) > min_iter:
+                ar, ai = mr, mi
+            else:
+                br, bi = mr, mi
+        return str(ar), str(ai)
+
+
 # ============================================================
-# Perturbation iteration (numpy reference engine)
+# Perturbation & direct polar De Moivre iteration (numpy)
 # ============================================================
 
 def _binoms(d: int) -> np.ndarray:
@@ -277,29 +326,56 @@ def perturbation_grid(orbit: ReferenceOrbit,
     return mu.reshape(shape)
 
 
-def direct_grid(c: np.ndarray, power: int, max_iter: int,
+def direct_grid(c: np.ndarray, power: float, max_iter: int,
                 escape_radius: float = 64.0) -> np.ndarray:
-    """Plain full-precision-free escape-time iteration (float64), for
-    validation at shallow zooms."""
-    z = np.zeros_like(c)
-    mu = np.full(c.shape, -1.0, dtype=np.float64)
-    active = np.ones(c.shape, dtype=bool)
+    """Direct f64 polar De Moivre escape-time iteration for $z \\mapsto z^p + c$
+    with arbitrary real exponent $p > 1$:
+        $r = \\sqrt{x^2 + y^2}$, $\\theta = \\text{atan2}(y, x)$,
+        $z_{n+1} = r^p(\\cos(p\\theta) + i\\sin(p\\theta)) + c$.
+    """
+    p = float(power)
+    if p <= 1.0:
+        raise ValueError(f"power must be > 1.0, got {power}")
+    c_arr = np.asarray(c, dtype=np.complex128)
+    shape = c_arr.shape
+    cr_all = c_arr.real.ravel()
+    ci_all = c_arr.imag.ravel()
+
+    zr = np.zeros_like(cr_all)
+    zi = np.zeros_like(ci_all)
+    mu = np.full(cr_all.shape, -1.0, dtype=np.float64)
+    active = np.ones(cr_all.shape, dtype=bool)
     esc2 = float(escape_radius) ** 2
-    log_d = math.log(power)
-    log_esc = math.log(escape_radius)
+    log_p = math.log(p)
+    log_esc = math.log(float(escape_radius))
+
     for n in range(max_iter):
-        z[active] = z[active] ** power + c[active]
-        z2 = z.real * z.real + z.imag * z.imag
-        escaped = active & (z2 > esc2)
-        if escaped.any():
-            r = np.sqrt(z2[escaped])
-            # The escaping value here is z_{n+1}; the smooth count is
-            # (escape index) + 1 - correction, matching perturbation_grid.
-            mu[escaped] = (n + 1) + 1.0 - np.log(np.log(r) / log_esc) / log_d
-            active &= ~escaped
-        if not active.any():
+        idx = np.flatnonzero(active)
+        if idx.size == 0:
             break
-    return mu
+        x = zr[idx]
+        y = zi[idx]
+        r2 = x * x + y * y
+        r = np.sqrt(r2)
+        theta = np.arctan2(y, x)
+        rp = np.where(r > 0.0, np.power(r, p), 0.0)
+        ptheta = p * theta
+        nx = rp * np.cos(ptheta) + cr_all[idx]
+        ny = rp * np.sin(ptheta) + ci_all[idx]
+        zr[idx] = nx
+        zi[idx] = ny
+
+        z2 = nx * nx + ny * ny
+        escaped = z2 > esc2
+        if escaped.any():
+            e = idx[escaped]
+            r_esc = np.sqrt(z2[escaped])
+            # The escaping value here is z_{n+1}; smooth count is
+            # (escape index) + 1 - ln(ln|z| / ln R) / ln p.
+            mu[e] = (n + 1) + 1.0 - np.log(np.log(r_esc) / log_esc) / log_p
+            active[e] = False
+
+    return mu.reshape(shape)
 
 
 # ============================================================
@@ -310,6 +386,12 @@ def dive_scale(t: float, scale_start: float, scale_end: float) -> float:
     """Exponential zoom: constant apparent speed in log space."""
     t = max(0.0, min(1.0, t))
     return scale_start * (scale_end / scale_start) ** t
+
+
+def dive_power(t: float, power_start: float, power_end: float) -> float:
+    """Continuous linear interpolation of exponent p(t) across [0, 1]."""
+    t = max(0.0, min(1.0, float(t)))
+    return float(power_start) + t * (float(power_end) - float(power_start))
 
 
 def pixel_deltas(width: int, height: int, scale: float,
@@ -399,32 +481,56 @@ if _HAS_TAICHI:
 
     @ti.data_oriented
     class FractalDiveEngine:
-        """Taichi f64 perturbation iterator. Computes the smooth-mu
-        grid on the backend; colouring stays on the CPU (cheap, and it
-        keeps palette handling in one place)."""
+        """Taichi f64 perturbation and direct polar De Moivre iterator.
+        Computes the smooth-mu grid on the backend; colouring stays on
+        the CPU (cheap, and it keeps palette handling in one place)."""
 
-        def __init__(self, width: int, height: int, orbit: ReferenceOrbit):
+        def __init__(self, width: int, height: int,
+                     orbit: ReferenceOrbit | None = None,
+                     power: float = 2.0,
+                     center_re: float = float(DEFAULT_CENTER_RE),
+                     center_im: float = float(DEFAULT_CENTER_IM),
+                     direct: bool = False):
             self.width = int(width)
             self.height = int(height)
             self.orbit = orbit
-            self.power = orbit.power
+            if orbit is not None:
+                self.power = int(orbit.power)
+                self.power_float = float(orbit.power)
+                self.center_re = float(orbit.center_re)
+                self.center_im = float(orbit.center_im)
+            else:
+                self.power_float = float(power)
+                self.power = max(2, int(round(self.power_float)))
+                self.center_re = float(center_re)
+                self.center_im = float(center_im)
+            self.direct = bool(direct or orbit is None
+                               or not is_integer_power(self.power_float))
             self._use_fallback = False
 
             f64_ok = ensure_taichi_f64()
             if not f64_ok:
                 # Active arch (e.g. Vulkan) does not support f64 and CUDA is unavailable.
-                # Fall back cleanly to perturbation_grid.
+                # Fall back cleanly to numpy grids.
                 self._use_fallback = True
-                self._n_ref = len(orbit)
+                self._n_ref = len(orbit) if orbit is not None else 1
                 return
 
-            self.set_orbit(orbit)
             self.mu = ti.field(dtype=ti.f32, shape=(self.height, self.width))
-            self._binom = ti.field(dtype=ti.f64, shape=max(3, orbit.power + 1))
+            self._binom = ti.field(dtype=ti.f64, shape=max(3, self.power + 1))
+            if orbit is not None:
+                self.set_orbit(orbit)
+            else:
+                self._n_ref = 1
+                self._zr = ti.field(dtype=ti.f64, shape=1)
+                self._zi = ti.field(dtype=ti.f64, shape=1)
 
         def set_orbit(self, orbit: ReferenceOrbit) -> None:
             self.orbit = orbit
-            self.power = orbit.power
+            self.power = int(orbit.power)
+            self.power_float = float(orbit.power)
+            self.center_re = float(orbit.center_re)
+            self.center_im = float(orbit.center_im)
             self._n_ref = len(orbit)
             if getattr(self, "_use_fallback", False):
                 return
@@ -433,9 +539,51 @@ if _HAS_TAICHI:
             self._zr.from_numpy(orbit.z.real.copy())
             self._zi.from_numpy(orbit.z.imag.copy())
 
+        def compute_mu_direct(self, center_re: float, center_im: float,
+                              power: float, scale: float, rotation: float,
+                              max_iter: int, escape_radius: float = 64.0,
+                              sub_dx: float = 0.0, sub_dy: float = 0.0) -> np.ndarray:
+            """Evaluate $z \\mapsto z^p + c$ directly via polar De Moivre in f64."""
+            if getattr(self, "_use_fallback", False):
+                dc = pixel_deltas(self.width, self.height, scale, rotation,
+                                  sub_dx, sub_dy)
+                c = complex(float(center_re), float(center_im)) + dc
+                return direct_grid(c, float(power), max_iter, escape_radius).astype(np.float32)
+
+            try:
+                p_f = float(power)
+                self._direct_kernel(
+                    float(center_re), float(center_im), p_f,
+                    float(scale), float(rotation), int(max_iter),
+                    float(escape_radius) ** 2,
+                    math.log(float(escape_radius)),
+                    math.log(p_f),
+                    float(sub_dx), float(sub_dy),
+                )
+                return self.mu.to_numpy()
+            except Exception as e:
+                if "f64" in str(e).lower() or "not supported" in str(e).lower():
+                    self._use_fallback = True
+                    dc = pixel_deltas(self.width, self.height, scale, rotation,
+                                      sub_dx, sub_dy)
+                    c = complex(float(center_re), float(center_im)) + dc
+                    return direct_grid(c, float(power), max_iter, escape_radius).astype(np.float32)
+                raise
+
         def compute_mu(self, scale: float, rotation: float,
                        max_iter: int, escape_radius: float = 64.0,
-                       sub_dx: float = 0.0, sub_dy: float = 0.0) -> np.ndarray:
+                       sub_dx: float = 0.0, sub_dy: float = 0.0,
+                       power: float | None = None,
+                       direct: bool = False) -> np.ndarray:
+            eff_power = self.power_float if power is None else float(power)
+            if (direct or self.direct or self.orbit is None
+                    or not is_integer_power(eff_power)
+                    or int(round(eff_power)) != self.orbit.power):
+                return self.compute_mu_direct(
+                    self.center_re, self.center_im, eff_power,
+                    scale, rotation, max_iter, escape_radius, sub_dx, sub_dy,
+                )
+
             if getattr(self, "_use_fallback", False):
                 dc = pixel_deltas(self.width, self.height, scale, rotation,
                                   sub_dx, sub_dy)
@@ -511,6 +659,41 @@ if _HAS_TAICHI:
                     m += 1
                 self.mu[py, px] = ti.cast(out, ti.f32)
 
+        @ti.kernel
+        def _direct_kernel(self, center_re: ti.f64, center_im: ti.f64,
+                           power: ti.f64, scale: ti.f64, rotation: ti.f64,
+                           max_iter: ti.i32, esc2: ti.f64, log_esc: ti.f64,
+                           log_p: ti.f64, sub_dx: ti.f64, sub_dy: ti.f64):
+            aspect = ti.cast(self.width, ti.f64) / ti.cast(self.height, ti.f64)
+            for py, px in self.mu:
+                u = ((ti.cast(px, ti.f64) + 0.5 + sub_dx)
+                     / self.width * 2.0 - 1.0) * scale * aspect
+                v = (1.0 - (ti.cast(py, ti.f64) + 0.5 + sub_dy)
+                     / self.height * 2.0) * scale
+                cr_rot = ti.cos(rotation)
+                sr_rot = ti.sin(rotation)
+                cr = center_re + (u * cr_rot - v * sr_rot)
+                ci = center_im + (u * sr_rot + v * cr_rot)
+
+                zr = ti.cast(0.0, ti.f64)
+                zi = ti.cast(0.0, ti.f64)
+                out = ti.cast(-1.0, ti.f64)
+                for n in range(max_iter):
+                    r2 = zr * zr + zi * zi
+                    r = ti.sqrt(r2)
+                    theta = ti.atan2(zi, zr)
+                    rp = ti.pow(r, power) if r > 0.0 else ti.cast(0.0, ti.f64)
+                    ptheta = power * theta
+                    zr = rp * ti.cos(ptheta) + cr
+                    zi = rp * ti.sin(ptheta) + ci
+                    z2 = zr * zr + zi * zi
+                    if z2 > esc2:
+                        r_esc = ti.sqrt(z2)
+                        out = ti.cast(n + 1, ti.f64) + 1.0 \
+                            - ti.log(ti.log(r_esc) / log_esc) / log_p
+                        break
+                self.mu[py, px] = ti.cast(out, ti.f32)
+
 
 # ============================================================
 # CLI (single still, for framing checks)
@@ -520,7 +703,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="fractal_dive")
     parser.add_argument("--center-re", default=DEFAULT_CENTER_RE)
     parser.add_argument("--center-im", default=DEFAULT_CENTER_IM)
-    parser.add_argument("--power", type=int, default=2)
+    parser.add_argument("--location", default=None,
+                        help="named location from FRACTAL_LOCATIONS / HEPTABROT_LOCATIONS")
+    parser.add_argument("--power", type=float, default=2.0)
+    parser.add_argument("--direct", action="store_true",
+                        help="force direct polar De Moivre evaluation even for integer power")
     parser.add_argument("--scale", type=float, default=1e-6,
                         help="viewport half-height in complex units")
     parser.add_argument("--rotation-deg", type=float, default=0.0)
@@ -532,13 +719,46 @@ def main(argv=None) -> int:
                         help=".png (needs imageio/cv2) or .npy")
     args = parser.parse_args(argv)
 
+    center_re = args.center_re
+    center_im = args.center_im
+    power = float(args.power)
+    if args.location:
+        from studio.voyage_composer import FRACTAL_LOCATIONS
+        locs = {name: (cre, cim, p) for name, cre, cim, p in list(FRACTAL_LOCATIONS) + list(HEPTABROT_LOCATIONS)}
+        if args.location not in locs:
+            raise ValueError(f"unknown location {args.location!r}; available: {sorted(locs)}")
+        center_re, center_im, loc_power = locs[args.location]
+        if "--power" not in (argv or []):
+            power = float(loc_power)
+
     max_iter = args.max_iter or iter_budget(args.scale)
-    orbit = ReferenceOrbit(args.center_re, args.center_im, power=args.power,
-                           max_iter=max_iter,
-                           precision=required_precision(args.scale))
-    dc = pixel_deltas(args.width, args.height, args.scale,
-                      math.radians(args.rotation_deg))
-    mu = perturbation_grid(orbit, dc, max_iter)
+    rot_rad = math.radians(args.rotation_deg)
+    use_direct = bool(args.direct or not is_integer_power(power))
+
+    if use_direct:
+        if _HAS_TAICHI and ensure_taichi_f64():
+            eng = FractalDiveEngine(args.width, args.height, orbit=None,
+                                    power=power, center_re=float(center_re),
+                                    center_im=float(center_im), direct=True)
+            mu = eng.compute_mu_direct(float(center_re), float(center_im),
+                                       power, args.scale, rot_rad, max_iter)
+        else:
+            dc = pixel_deltas(args.width, args.height, args.scale, rot_rad)
+            c = complex(float(center_re), float(center_im)) + dc
+            mu = direct_grid(c, power, max_iter)
+        mode_info = f"direct polar De Moivre (power={power:g})"
+    else:
+        int_power = int(round(power))
+        orbit = ReferenceOrbit(center_re, center_im, power=int_power,
+                               max_iter=max_iter,
+                               precision=required_precision(args.scale))
+        if _HAS_TAICHI and ensure_taichi_f64():
+            eng = FractalDiveEngine(args.width, args.height, orbit=orbit)
+            mu = eng.compute_mu(args.scale, rot_rad, max_iter)
+        else:
+            dc = pixel_deltas(args.width, args.height, args.scale, rot_rad)
+            mu = perturbation_grid(orbit, dc, max_iter)
+        mode_info = f"{len(orbit)} ref orbit points"
 
     from scene.palette import get_palette
     rgb = colorize(mu, get_palette("trumbull_2001").anchors)
@@ -554,7 +774,7 @@ def main(argv=None) -> int:
             import cv2
             cv2.imwrite(args.out, cv2.cvtColor(img8, cv2.COLOR_RGB2BGR))
     print(f"wrote {args.out} (scale {args.scale:g}, {max_iter} max iters, "
-          f"{len(orbit)} ref orbit points)")
+          f"{mode_info})")
     return 0
 
 

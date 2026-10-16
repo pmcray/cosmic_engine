@@ -324,6 +324,116 @@ def test_fractal_dive_adapter_frames() -> None:
     print("ok: test_fractal_dive_adapter_frames")
 
 
+def test_heptabrot_locations_survive_5000_iters_and_resolve_1e18() -> None:
+    """Option A validation: at least two power=7 Heptabrot coordinates
+    survive >5,000 iterations and exhibit rich structure down to 1e-18."""
+    from render.fractal_dive import (
+        HEPTABROT_LOCATIONS,
+        ReferenceOrbit,
+        iter_budget,
+        perturbation_grid,
+        pixel_deltas,
+        required_precision,
+    )
+    from studio.voyage_composer import FRACTAL_LOCATIONS
+
+    p7_in_fractal = [loc for loc in FRACTAL_LOCATIONS if loc[3] == 7]
+    assert len(HEPTABROT_LOCATIONS) >= 2
+    assert len(p7_in_fractal) >= 2
+
+    for name, cre, cim, power in HEPTABROT_LOCATIONS:
+        assert power == 7
+        # 1. Must survive > 5,000 iterations at high precision
+        orb = ReferenceOrbit(cre, cim, power=7, max_iter=5100, precision=65)
+        assert len(orb) > 5000, f"{name} escaped at {len(orb)} <= 5000"
+
+        # 2. Must resolve rich filament structure down to 1e-18
+        scale = 1e-18
+        budget = iter_budget(scale)
+        deep_orb = ReferenceOrbit(
+            cre, cim, power=7, max_iter=budget,
+            precision=required_precision(scale),
+        )
+        dc = pixel_deltas(16, 12, scale)
+        mu = perturbation_grid(deep_orb, dc, budget)
+        escaped = mu >= 0
+        assert escaped.any(), f"{name} did not escape anywhere at 1e-18"
+        spread = float(mu[escaped].max() - mu[escaped].min())
+        assert spread > 50.0, f"{name} flat at 1e-18 (spread={spread})"
+    print("ok: test_heptabrot_locations_survive_5000_iters_and_resolve_1e18")
+
+
+def test_bisect_boundary_utility() -> None:
+    """High-precision bisection utility locates a power=7 boundary point."""
+    from render.fractal_dive import ReferenceOrbit, bisect_boundary
+
+    # (0, 0) is strictly interior for z^7 + c; (0.9, 0.0) escapes immediately.
+    cre, cim = bisect_boundary("0.0", "0.0", "0.9", "0.0",
+                               power=7, min_iter=400, steps=28, precision=40)
+    orb = ReferenceOrbit(cre, cim, power=7, max_iter=400, precision=40)
+    assert len(orb) > 400
+    print("ok: test_bisect_boundary_utility")
+
+
+def test_fractional_power_direct_de_moivre() -> None:
+    """Option B validation: continuous fractional exponents (e.g. p=2.5, 7.35)
+    route through polar De Moivre in both NumPy and Taichi f64."""
+    from render.fractal_dive import direct_grid, pixel_deltas
+
+    dc = pixel_deltas(48, 32, 0.8)
+    c = (-0.5 + 0.0j) + dc
+    mu_25 = direct_grid(c, 2.5, max_iter=120)
+    mu_735 = direct_grid(c, 7.35, max_iter=120)
+
+    assert mu_25.shape == (32, 48) and mu_735.shape == (32, 48)
+    assert (mu_25 < 0).any() and (mu_25 >= 0).any()
+    assert (mu_735 < 0).any() and (mu_735 >= 0).any()
+    assert not np.allclose(mu_25, mu_735)
+
+    if _has_taichi():
+        from render.fractal_dive import FractalDiveEngine
+        eng = FractalDiveEngine(48, 32, orbit=None, power=2.5,
+                                center_re=-0.5, center_im=0.0, direct=True)
+        mu_ti = eng.compute_mu_direct(-0.5, 0.0, 2.5, 0.8, 0.0, 120).astype(np.float64)
+        assert ((mu_ti < 0) == (mu_25 < 0)).mean() > 0.999
+        both = (mu_ti >= 0) & (mu_25 >= 0)
+        assert np.percentile(np.abs(mu_ti[both] - mu_25[both]), 99) < 0.01
+    print("ok: test_fractional_power_direct_de_moivre")
+
+
+def test_fractional_power_morphing_adapter() -> None:
+    """Animated power_start -> power_end morphing in FractalDiveRenderer."""
+    import render.adapters  # noqa: F401
+    from render.core import get_renderer
+    from scene.manifest import Shot
+
+    shot = Shot(
+        id="morph",
+        renderer="fractal_dive",
+        params={
+            "center_re": "-0.75",
+            "center_im": "0.02",
+            "power_start": 2.0,
+            "power_end": 7.0,
+            "scale_start": 1.6,
+            "scale_end": 0.05,
+            "samples": 1,
+            "iter_base": 120,
+            "iter_per_decade": 100,
+        },
+        duration_frames=5,
+        resolution=(48, 27),
+    )
+    r = get_renderer("fractal_dive")(shot)
+    f0 = r.render_frame(0, 0.0, shot.camera.at(0.0))
+    f_mid = r.render_frame(2, 0.5, shot.camera.at(0.5))
+    f_end = r.render_frame(4, 1.0, shot.camera.at(1.0))
+    assert f0.shape == (27, 48, 3)
+    assert np.isfinite(f0).all() and np.isfinite(f_mid).all() and np.isfinite(f_end).all()
+    assert not np.array_equal(f0, f_mid) and not np.array_equal(f_mid, f_end)
+    print("ok: test_fractional_power_morphing_adapter")
+
+
 def main_runner() -> int:
     test_required_precision_grows_with_depth()
     test_iter_budget_grows_with_depth()
@@ -342,6 +452,10 @@ def main_runner() -> int:
     test_fractal_locations_are_valid_and_parse()
     test_taichi_engine_matches_numpy_engine()
     test_fractal_dive_adapter_frames()
+    test_heptabrot_locations_survive_5000_iters_and_resolve_1e18()
+    test_bisect_boundary_utility()
+    test_fractional_power_direct_de_moivre()
+    test_fractional_power_morphing_adapter()
     print("\nall fractal dive tests passed")
     return 0
 
