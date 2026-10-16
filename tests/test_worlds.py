@@ -34,13 +34,35 @@ def test_uwp_parses_and_round_trips() -> None:
 def test_uwp_rejects_malformed() -> None:
     from worlds.uwp import UWP, UWPError
 
-    for bad in ("", "nonsense", "Z867949-C", "A86794-C", "A867949"):
+    for bad in ("", "nonsense", "Z867949-C", "A86794-C", "A867949", "AK67949-C", "AB67949-C"):
         try:
             UWP.parse(bad)
         except UWPError:
             continue
         raise AssertionError(f"expected UWPError for {bad!r}")
     print("ok: test_uwp_rejects_malformed")
+
+
+def test_uwp_pop_zero_forces_canonical() -> None:
+    from worlds.uwp import UWP
+
+    # Any UWP with Pop == 0 must force Starport X, Gov 0, Law 0, TL 0
+    u = UWP.parse("A867049-C")
+    assert u.population == 0
+    assert u.starport == "X"
+    assert u.government == 0
+    assert u.law_level == 0
+    assert u.tech_level == 0
+    assert str(u) == "X867000-0"
+
+    u_direct = UWP(starport="B", size=7, atmosphere=5, hydrographics=4,
+                   population=0, government=3, law_level=2, tech_level=8)
+    assert u_direct.starport == "X"
+    assert u_direct.government == 0
+    assert u_direct.law_level == 0
+    assert u_direct.tech_level == 0
+    assert str(u_direct) == "X754000-0"
+    print("ok: test_uwp_pop_zero_forces_canonical")
 
 
 def test_ehex_skips_i_and_o() -> None:
@@ -178,11 +200,148 @@ def test_giants_get_giant_profiles() -> None:
     giants = [w for w in worlds if w.is_giant]
     assert giants, "no giants generated in 400 worlds"
     for g in giants:
-        # A giant has no surface to be an ocean, and is not Earth-sized.
-        assert g.uwp.hydrographics == 0, g.summary()
-        assert g.uwp.size >= 11, g.summary()
-        assert g.uwp.atmosphere in (10, 11, 12, 15), g.summary()
+        # Canonical rule: mainworld UWP strictly describes terrestrial mainworld / satellite,
+        # never a gas giant with Size K. Size must be 0-A (0-10).
+        assert 0 <= g.uwp.size <= 10, g.summary()
+        assert g.has_gas_giant is True, g.summary()
+        assert g.gas_giant_count >= 1, g.summary()
+        if g.uwp.population == 0:
+            assert g.uwp.starport == "X"
+            assert g.uwp.government == 0 and g.uwp.law_level == 0 and g.uwp.tech_level == 0
     print("ok: test_giants_get_giant_profiles")
+
+
+def test_canonical_trade_codes() -> None:
+    from worlds.uwp import UWP, compute_trade_codes
+
+    # Ba: Barren (Pop 0) -> forces X...000-0
+    u_ba = UWP(size=5, atmosphere=5, hydrographics=5, population=0)
+    tc_ba = compute_trade_codes(u_ba)
+    assert "Ba" in tc_ba
+    assert "Ag" not in tc_ba and "Ni" not in tc_ba and "Ri" not in tc_ba
+
+    # As: Asteroid (Size 0, Atm 0, Hyd 0)
+    u_as = UWP(starport="C", size=0, atmosphere=0, hydrographics=0, population=5, government=4, law_level=3, tech_level=8)
+    assert "As" in compute_trade_codes(u_as)
+    assert "Va" in compute_trade_codes(u_as)
+
+    # Va: Vacuum (Atm 0)
+    u_va = UWP(starport="C", size=5, atmosphere=0, hydrographics=0, population=5, government=4, law_level=3, tech_level=8)
+    assert "Va" in compute_trade_codes(u_va)
+
+    # De: Desert (Atm >= 2, Hyd 0)
+    u_de = UWP(starport="C", size=5, atmosphere=5, hydrographics=0, population=5, government=4, law_level=3, tech_level=8)
+    assert "De" in compute_trade_codes(u_de)
+
+    # Ic: Ice-Capped (Atm 0-1, Hyd 1+)
+    u_ic = UWP(starport="C", size=5, atmosphere=1, hydrographics=5, population=5, government=4, law_level=3, tech_level=8)
+    assert "Ic" in compute_trade_codes(u_ic)
+
+    # Fl: Fluid Oceans (Atm 10+, Hyd 1+)
+    u_fl = UWP(starport="C", size=5, atmosphere=10, hydrographics=5, population=5, government=4, law_level=3, tech_level=8)
+    assert "Fl" in compute_trade_codes(u_fl)
+
+    # Hi: High Population (Pop 9+)
+    u_hi = UWP(starport="A", size=8, atmosphere=6, hydrographics=7, population=9, government=5, law_level=4, tech_level=12)
+    assert "Hi" in compute_trade_codes(u_hi)
+
+    # In: Industrial (Atm 0, 1, 2, 4, 7, 9; Pop 9+)
+    u_in = UWP(starport="A", size=8, atmosphere=2, hydrographics=0, population=9, government=5, law_level=4, tech_level=12)
+    assert "In" in compute_trade_codes(u_in)
+
+    # Ag: Agricultural (Atm 4-9, Hyd 4-8, Pop 5-7)
+    u_ag = UWP(starport="C", size=6, atmosphere=6, hydrographics=6, population=6, government=4, law_level=3, tech_level=8)
+    assert "Ag" in compute_trade_codes(u_ag)
+
+    # Na: Non-Agricultural (Atm 0-3, Hyd 0-3, Pop 6+)
+    u_na = UWP(starport="C", size=6, atmosphere=2, hydrographics=2, population=6, government=4, law_level=3, tech_level=8)
+    assert "Na" in compute_trade_codes(u_na)
+
+    # Ni: Non-Industrial (Pop 4-6)
+    u_ni = UWP(starport="C", size=6, atmosphere=3, hydrographics=5, population=5, government=4, law_level=3, tech_level=8)
+    assert "Ni" in compute_trade_codes(u_ni)
+
+    # Po: Poor (Atm 2-5, Hyd 0-3)
+    u_po = UWP(starport="C", size=6, atmosphere=3, hydrographics=2, population=5, government=4, law_level=3, tech_level=8)
+    assert "Po" in compute_trade_codes(u_po)
+
+    # Ri: Rich (Atm 6 or 8, Pop 6-8, Gov 4-9)
+    u_ri = UWP(starport="A", size=8, atmosphere=6, hydrographics=5, population=7, government=5, law_level=3, tech_level=10)
+    assert "Ri" in compute_trade_codes(u_ri)
+    print("ok: test_canonical_trade_codes")
+
+
+def test_gas_giant_and_satellite_shots() -> None:
+    from worlds.adapter import params_for, renderer_for, shot_for_world
+    from worlds.model import World
+    from worlds.uwp import UWP
+
+    canonical_uwp = UWP.parse("A867949-C")
+    # System with gas giants where body_type targets the giant
+    w_giant = World(
+        name="Calandron",
+        uwp=canonical_uwp,
+        body_type="gas_giant",
+        has_gas_giant=True,
+        gas_giant_count=2,
+    )
+    assert renderer_for(w_giant) == "volumetric_gas_giant"
+    shot = shot_for_world(w_giant)
+    assert shot.renderer == "volumetric_gas_giant"
+    assert shot.params["world"]["uwp"] == "A867949-C"
+    assert shot.params["world"]["has_gas_giant"] is True
+    assert shot.params["world"]["gas_giant_count"] == 2
+
+    # Ringed giant
+    w_ringed = World(
+        name="Saturnia",
+        uwp=canonical_uwp,
+        body_type="ringed_giant",
+        has_gas_giant=True,
+        gas_giant_count=1,
+    )
+    assert renderer_for(w_ringed) == "saturn_class"
+    shot_r = shot_for_world(w_ringed)
+    assert shot_r.renderer == "saturn_class"
+    assert shot_r.params["rings_enable"] == 1
+
+    # Terrestrial mainworld orbiting a gas giant as a moon
+    w_moon = World(
+        name="Europa Prime",
+        uwp=canonical_uwp,
+        body_type="terrestrial",
+        has_gas_giant=True,
+        gas_giant_count=3,
+        parent_body="Jupiter Major",
+        parent_body_type="gas_giant",
+    )
+    # Default is surface terrain
+    assert renderer_for(w_moon) == "terrain"
+    # When targeting the system's giant or requesting flyby:
+    assert renderer_for(w_moon, target="gas_giant") == "volumetric_gas_giant"
+    assert renderer_for(w_moon, target="satellite_flyby") == "volumetric_gas_giant"
+    flyby_shot = shot_for_world(w_moon, target="satellite_flyby")
+    assert flyby_shot.renderer == "volumetric_gas_giant"
+    assert flyby_shot.params["world"]["uwp"] == "A867949-C"
+    assert flyby_shot.params["world"]["parent_body"] == "Jupiter Major"
+    print("ok: test_gas_giant_and_satellite_shots")
+
+
+def test_worldmaker_provider_clean_mapping() -> None:
+    from worlds.providers import WorldmakerProvider
+
+    wm = WorldmakerProvider()
+    assert wm.available(), "worldmaker should be detected as available"
+    worlds = wm.generate(seed=1977, count=5)
+    assert len(worlds) == 5
+    for w in worlds:
+        assert 0 <= w.uwp.size <= 10, f"size out of bounds: {w.uwp}"
+        if w.uwp.population == 0:
+            assert w.uwp.starport == "X"
+            assert w.uwp.government == 0 and w.uwp.law_level == 0 and w.uwp.tech_level == 0
+        assert w.provider == "worldmaker"
+        assert w.star.spectral_class in ("O", "B", "A", "F", "G", "K", "M")
+    print("ok: test_worldmaker_provider_clean_mapping")
 
 
 def test_get_provider_falls_back_to_procedural() -> None:
@@ -324,12 +483,12 @@ def test_renderer_selection_by_body_type() -> None:
 
     assert renderer_for(_world("A867949-C")) == "terrain"
     assert renderer_for(_world("X000000-0", body="asteroid")) == "terrain"
-    assert renderer_for(_world("XG00000-0", body="gas_giant")) \
+    assert renderer_for(_world("X000000-0", body="gas_giant")) \
         == "volumetric_gas_giant"
-    assert renderer_for(_world("XG00000-0", body="ringed_giant")) \
+    assert renderer_for(_world("X000000-0", body="ringed_giant")) \
         == "saturn_class"
     for b in ("hot_jupiter", "mini_neptune", "brown_dwarf"):
-        assert renderer_for(_world("XG00000-0", body=b)) \
+        assert renderer_for(_world("X000000-0", body=b)) \
             == "exoplanet_atmosphere"
     print("ok: test_renderer_selection_by_body_type")
 
@@ -495,6 +654,7 @@ def test_cli_status_and_world_run() -> None:
 def main_runner() -> int:
     test_uwp_parses_and_round_trips()
     test_uwp_rejects_malformed()
+    test_uwp_pop_zero_forces_canonical()
     test_ehex_skips_i_and_o()
     test_uwp_physical_interpretation()
     test_hex_label_and_subsector_mapping()
@@ -502,7 +662,10 @@ def main_runner() -> int:
     test_star_temperature_ordering()
     test_procedural_provider_is_deterministic()
     test_rolled_uwps_are_traveller_legal()
+    test_canonical_trade_codes()
     test_giants_get_giant_profiles()
+    test_gas_giant_and_satellite_shots()
+    test_worldmaker_provider_clean_mapping()
     test_get_provider_falls_back_to_procedural()
     test_provider_import_does_not_leak_sys_path()
     test_provider_status_reports_all_four()

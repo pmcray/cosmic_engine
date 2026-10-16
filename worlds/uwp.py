@@ -32,7 +32,7 @@ from dataclasses import dataclass
 # Pseudo-hex: I and O are skipped.
 _EHEX = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 
-UWP_RE = re.compile(r"^([A-EX])([0-9A-HJ-NP-Z])([0-9A-HJ-NP-Z])([0-9A-HJ-NP-Z])"
+UWP_RE = re.compile(r"^([A-EX])([0-9A])([0-9A-HJ-NP-Z])([0-9A-HJ-NP-Z])"
                     r"([0-9A-HJ-NP-Z])([0-9A-HJ-NP-Z])([0-9A-HJ-NP-Z])"
                     r"-?([0-9A-HJ-NP-Z])$")
 
@@ -107,6 +107,35 @@ class UWP:
     law_level: int = 3
     tech_level: int = 9
 
+    def __post_init__(self) -> None:
+        sp = str(self.starport).upper()
+        if sp not in "ABCDEX":
+            raise UWPError(f"invalid starport: {self.starport!r}")
+        object.__setattr__(self, "starport", sp)
+
+        if not (0 <= self.size <= 10):
+            raise UWPError(f"canonical mainworld size must be 0-A (0-10), got {self.size}")
+        if not (0 <= self.atmosphere <= 15):
+            raise UWPError(f"atmosphere out of range 0-15: {self.atmosphere}")
+        if not (0 <= self.hydrographics <= 10):
+            raise UWPError(f"hydrographics out of range 0-10: {self.hydrographics}")
+        if not (0 <= self.population <= 10):
+            raise UWPError(f"population out of range 0-10: {self.population}")
+        if not (0 <= self.government <= 15):
+            raise UWPError(f"government out of range 0-15: {self.government}")
+        if not (0 <= self.law_level <= 15):
+            raise UWPError(f"law level out of range 0-15: {self.law_level}")
+        if not (0 <= self.tech_level <= 33):
+            raise UWPError(f"tech level out of range: {self.tech_level}")
+
+        # Canonical rule: whenever Population == 0,
+        # Government, Law Level, and Tech Level MUST be 0 (000-0) with Starport X.
+        if self.population == 0:
+            object.__setattr__(self, "starport", "X")
+            object.__setattr__(self, "government", 0)
+            object.__setattr__(self, "law_level", 0)
+            object.__setattr__(self, "tech_level", 0)
+
     # ---- construction ------------------------------------------------
 
     @classmethod
@@ -141,11 +170,11 @@ class UWP:
 
     @property
     def diameter_km(self) -> float:
-        return SIZES.get(self.size, SIZES[12])[0]
+        return SIZES.get(self.size, SIZES[10])[0]
 
     @property
     def gravity_g(self) -> float:
-        return SIZES.get(self.size, SIZES[12])[1]
+        return SIZES.get(self.size, SIZES[10])[1]
 
     @property
     def atmosphere_label(self) -> str:
@@ -173,6 +202,9 @@ class UWP:
     def is_inhabited(self) -> bool:
         return self.population > 0
 
+    def trade_codes(self, temp_k: float | None = None) -> tuple[str, ...]:
+        return compute_trade_codes(self, temp_k)
+
     def describe(self) -> str:
         wet = f"{self.water_fraction * 100:.0f}% water"
         pop = ("uninhabited" if not self.is_inhabited
@@ -180,3 +212,77 @@ class UWP:
         return (f"{self.diameter_km:.0f} km, {self.gravity_g:.2f}g, "
                 f"{self.atmosphere_label} atmosphere, {wet}, {pop}, "
                 f"TL{self.tech_level}")
+
+
+def compute_trade_codes(uwp: UWP, temp_k: float | None = None) -> tuple[str, ...]:
+    """Compute canonical Traveller trade codes for a world.
+
+    Computed strictly according to canonical Traveller UWP ranges
+    (1981 Book 3 / Mongoose World Builder's Handbook):
+    Ba, Va, De, Ic, Fl, Hi, In, Ag, Na, Ni, Po, Ri, As (plus Wa, Fr, Ho).
+    """
+    codes: list[str] = []
+
+    # Ag: Agricultural (Atm 4-9, Hyd 4-8, Pop 5-7)
+    if 4 <= uwp.atmosphere <= 9 and 4 <= uwp.hydrographics <= 8 and 5 <= uwp.population <= 7:
+        codes.append("Ag")
+
+    # As: Asteroid (Size 0, Atm 0, Hyd 0)
+    if uwp.size == 0 and uwp.atmosphere == 0 and uwp.hydrographics == 0:
+        codes.append("As")
+
+    # Ba: Barren (Pop 0, Gov 0, Law 0)
+    if uwp.population == 0:
+        codes.append("Ba")
+
+    # De: Desert (Atm 2+, Hyd 0)
+    if uwp.atmosphere >= 2 and uwp.hydrographics == 0:
+        codes.append("De")
+
+    # Fl: Fluid Oceans (Atm 10+, Hyd 1+)
+    if uwp.atmosphere >= 10 and uwp.hydrographics >= 1:
+        codes.append("Fl")
+
+    # Hi: High Population (Pop 9+)
+    if uwp.population >= 9:
+        codes.append("Hi")
+
+    # Ic: Ice-Capped (Atm 0-1, Hyd 1+)
+    if uwp.atmosphere in (0, 1) and uwp.hydrographics >= 1:
+        codes.append("Ic")
+
+    # In: Industrial (Atm 0, 1, 2, 4, 7, 9; Pop 9+)
+    if uwp.atmosphere in (0, 1, 2, 4, 7, 9) and uwp.population >= 9:
+        codes.append("In")
+
+    # Na: Non-Agricultural (Atm 0-3, Hyd 0-3, Pop 6+)
+    if 0 <= uwp.atmosphere <= 3 and 0 <= uwp.hydrographics <= 3 and uwp.population >= 6:
+        codes.append("Na")
+
+    # Ni: Non-Industrial (Pop 4-6)
+    if 4 <= uwp.population <= 6:
+        codes.append("Ni")
+
+    # Po: Poor (Atm 2-5, Hyd 0-3)
+    if 2 <= uwp.atmosphere <= 5 and 0 <= uwp.hydrographics <= 3:
+        codes.append("Po")
+
+    # Ri: Rich (Atm 6 or 8, Pop 6-8, Gov 4-9)
+    if uwp.atmosphere in (6, 8) and 6 <= uwp.population <= 8 and 4 <= uwp.government <= 9:
+        codes.append("Ri")
+
+    # Va: Vacuum (Atm 0)
+    if uwp.atmosphere == 0:
+        codes.append("Va")
+
+    # Wa: Water World (Hyd 10)
+    if uwp.hydrographics == 10:
+        codes.append("Wa")
+
+    if temp_k is not None:
+        if temp_k < 240.0:
+            codes.append("Fr")
+        if temp_k > 330.0:
+            codes.append("Ho")
+
+    return tuple(sorted(codes))

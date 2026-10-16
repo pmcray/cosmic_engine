@@ -85,6 +85,11 @@ class World:
     # this world keys off it.
     seed: int = 0
     provider: str = "procedural"
+    # System metadata for gas giants and satellite systems
+    has_gas_giant: bool = False
+    gas_giant_count: int = 0
+    parent_body: str | None = None
+    parent_body_type: str | None = None
 
     # ---- derived -----------------------------------------------------
 

@@ -43,19 +43,26 @@ def star_light_rgb(world: World) -> tuple:
                               STAR_LIGHT_RGB["G"])
 
 
-def renderer_for(world: World) -> str:
-    if world.body_type == "gas_giant":
+def renderer_for(world: World, target: str | None = None) -> str:
+    body = target or world.body_type
+    if body in ("gas_giant", "volumetric_gas_giant"):
         return "volumetric_gas_giant"
-    if world.body_type == "ringed_giant":
+    if body in ("ringed_giant", "saturn_class"):
         return "saturn_class"
-    if world.body_type in ("hot_jupiter", "mini_neptune", "brown_dwarf"):
+    if body in ("hot_jupiter", "mini_neptune", "brown_dwarf", "exoplanet_atmosphere"):
         return "exoplanet_atmosphere"
+    if body in ("giant", "system_giant", "satellite_flyby"):
+        if world.parent_body_type == "ringed_giant":
+            return "saturn_class"
+        return "volumetric_gas_giant"
     return "terrain"
 
 
-def palette_for(world: World) -> str:
+def palette_for(world: World, target: str | None = None) -> str:
     """Pick a look that suits the world rather than the shot's neighbours;
     the continuity engine still gets the final say."""
+    if renderer_for(world, target=target) in ("volumetric_gas_giant", "saturn_class"):
+        return "trumbull_2001"
     if world.is_giant:
         return "trumbull_2001"
     if world.uwp.is_vacuum:
@@ -131,7 +138,7 @@ def terrain_params(world: World) -> dict:
     }
 
 
-def giant_params(world: World) -> dict:
+def giant_params(world: World, target: str | None = None) -> dict:
     """Bands and storms for a gas giant. Colder giants are paler and
     more banded (Saturn); hotter ones are darker and more turbulent."""
     rng = random.Random(world.seed ^ 0x5C1A77)
@@ -146,7 +153,13 @@ def giant_params(world: World) -> dict:
         "seed": world.seed & 0xFFFFF,
         "push_in_factor": rng.uniform(1.15, 1.5),
     }
-    if world.body_type == "ringed_giant":
+    body = target or world.body_type
+    is_ringed = (
+        body in ("ringed_giant", "saturn_class")
+        or (body in ("giant", "system_giant", "satellite_flyby") and world.parent_body_type == "ringed_giant")
+        or (world.parent_body_type == "ringed_giant" and target is not None)
+    )
+    if is_ringed:
         params.update({
             "rings_enable": 1,
             "ring_brightness": rng.uniform(0.8, 1.15),
@@ -180,40 +193,48 @@ def exoplanet_params(world: World) -> dict:
     }
 
 
-def world_provenance(world: World) -> dict:
+def world_provenance(world: World, target: str | None = None) -> dict:
     """The record carried in a shot's params so a rendered frame can be
-    traced back to the world that produced it."""
-    return {
+    traced back to the world that produced it. Preserves the canonical
+    terrestrial mainworld UWP even when rendering a giant shot."""
+    prov = {
         "name": world.name,
         "uwp": str(world.uwp),
         "sector": world.sector,
         "hex": world.hex_label,
         "subsector": world.subsector,
-        "body_type": world.body_type,
+        "body_type": target or world.body_type,
         "mean_temp_k": round(world.mean_temp_k, 1),
         "star": str(world.star),
         "provider": world.provider,
     }
+    if world.has_gas_giant:
+        prov["has_gas_giant"] = True
+        prov["gas_giant_count"] = world.gas_giant_count
+    if world.parent_body:
+        prov["parent_body"] = world.parent_body
+        prov["parent_body_type"] = world.parent_body_type
+    return prov
 
 
-def params_for(world: World, provenance: bool = True) -> dict:
-    renderer = renderer_for(world)
+def params_for(world: World, provenance: bool = True, target: str | None = None) -> dict:
+    renderer = renderer_for(world, target=target)
     if renderer == "terrain":
         params = terrain_params(world)
     elif renderer in ("volumetric_gas_giant", "saturn_class"):
-        params = giant_params(world)
+        params = giant_params(world, target=target)
     else:
         params = exoplanet_params(world)
     if provenance:
-        params["world"] = world_provenance(world)
+        params["world"] = world_provenance(world, target=target)
     return params
 
 
-def camera_for(world: World, rng: random.Random | None = None) -> Camera:
+def camera_for(world: World, rng: random.Random | None = None, target: str | None = None) -> Camera:
     """A surface world gets a low fly-through; a giant gets a slow
     approach from outside."""
     rng = rng or random.Random(world.seed ^ 0x0CA3E1)
-    if renderer_for(world) == "terrain":
+    if renderer_for(world, target=target) == "terrain":
         return Camera(
             position=(rng.uniform(-5.0, -1.5), rng.uniform(0.9, 1.4),
                       rng.uniform(-6.0, -1.5)),
@@ -246,8 +267,8 @@ def camera_for(world: World, rng: random.Random | None = None) -> Camera:
     )
 
 
-def motion_hint_for(world: World) -> str:
-    return "fly_through" if renderer_for(world) == "terrain" else "push_in"
+def motion_hint_for(world: World, target: str | None = None) -> str:
+    return "fly_through" if renderer_for(world, target=target) == "terrain" else "push_in"
 
 
 def shot_for_world(world: World,
@@ -255,20 +276,22 @@ def shot_for_world(world: World,
                    duration_frames: int = 120,
                    fps: int = 24,
                    resolution: tuple = (1920, 1080),
-                   palette: str | None = None) -> Shot:
+                   palette: str | None = None,
+                   target: str | None = None) -> Shot:
     """Build a complete, renderable Shot for one world."""
-    renderer = renderer_for(world)
-    params = params_for(world)
+    renderer = renderer_for(world, target=target)
+    params = params_for(world, target=target)
     safe = "".join(c if c.isalnum() else "_" for c in world.name).strip("_")
+    tag = f"_{target}" if target else ""
     return Shot(
-        id=shot_id or f"world_{world.hex_label}_{safe or 'unnamed'}",
+        id=shot_id or f"world_{world.hex_label}_{safe or 'unnamed'}{tag}",
         renderer=renderer,
         params=params,
-        camera=camera_for(world),
-        palette=PaletteRef(name=palette or palette_for(world)),
+        camera=camera_for(world, target=target),
+        palette=PaletteRef(name=palette or palette_for(world, target=target)),
         duration_frames=duration_frames,
         fps=fps,
         resolution=resolution,
         seed=world.seed & 0xFFFFF,
-        motion_hint=motion_hint_for(world),
+        motion_hint=motion_hint_for(world, target=target),
     )

@@ -107,27 +107,33 @@ def cmd_manifest(args) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="worlds")
-    parser.add_argument("--seed", type=int, default=1977)
-    parser.add_argument("--sector", default="Foreven")
-    parser.add_argument("--provider", default=None,
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--seed", type=int, default=1977)
+    common.add_argument("--sector", default="Foreven")
+    common.add_argument("--provider", default=None,
                         help="worldmaker | procedural (default: auto)")
+
+    parser = argparse.ArgumentParser(prog="worlds", parents=[common])
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("status", help="which sister projects are reachable")
+    p = sub.add_parser("status", help="which sister projects are reachable",
+                       parents=[common])
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("sector", help="generate and list a sector")
+    p = sub.add_parser("sector", help="generate and list a sector",
+                       parents=[common])
     p.add_argument("--limit", type=int, default=25,
                    help="rows to print (0 = all)")
     p.add_argument("--out", help="write full .sec-style data here")
     p.set_defaults(func=cmd_sector)
 
-    p = sub.add_parser("world", help="describe one world and its shot")
+    p = sub.add_parser("world", help="describe one world and its shot",
+                       parents=[common])
     p.add_argument("--hex", required=True, help="e.g. 1721")
     p.set_defaults(func=cmd_world)
 
-    p = sub.add_parser("manifest", help="emit a voyage touring the sector")
+    p = sub.add_parser("manifest", help="emit a voyage touring the sector",
+                       parents=[common])
     p.add_argument("--count", type=int, default=12)
     p.add_argument("--shot-frames", type=int, default=120)
     p.add_argument("--fps", type=int, default=24)
