@@ -1052,6 +1052,139 @@ class FractalDiveRenderer(Renderer):
         return (acc / len(offsets)).astype(np.float32)
 
 
+@register_renderer("hyperbolic_tiling")
+class HyperbolicTilingRenderer(Renderer):
+    """Hyperbolic & 7-fold quasicrystalline tiling renderer with coupled
+    spatiotemporal graph dynamics and SU(1,1) Mobius camera motion
+    (render.hyperbolic_tiling).
+
+    Expected params (all optional):
+        mode               : "poincare_7_3" (default) | "poincare_3_7" | "quasicrystal_7"
+        layers             : BFS layers (default 4, ~150-600 tiles)
+        max_tiles          : optional cap on tile count
+        dynamics           : "cml" (default) | "life_like"
+        epsilon            : CML coupling strength in [0, 1] (default 0.28)
+        r                  : CML logistic parameter (default 3.82)
+        warmup_steps       : initial graph warmup steps (default 10)
+        frames_per_step    : temporal interpolation span in frames (default 4)
+        drift_radius       : max Poincare camera |a(t)| < 1 (default 0.48)
+        drift_angle_deg    : initial drift azimuth in degrees (default 30.0)
+        drift_turns        : azimuthal turns across shot (default 0.35)
+        rotation_deg_start : frame rotation at t=0 (default 0.0)
+        rotation_deg_total : additional rotation across shot (default 90.0)
+        disk_scale         : disk diameter fraction of frame height (default 0.92)
+        edge_width_px      : geodesic stroke width in pixels (default 1.35)
+        color_cycles       : palette cycles across state/depth (default 1.5)
+        color_phase        : initial palette phase (default 0.0)
+        samples            : supersampling grid side (default 1)
+        seed               : deterministic dynamics seed (default shot.seed)
+        engine             : "auto" | "taichi" | "numpy"
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        from render import hyperbolic_tiling as ht
+        from scene.palette import get_palette
+
+        p = shot.params
+        self._ht = ht
+        self._mode = str(p.get("mode", "poincare_7_3"))
+        self._layers = int(p.get("layers", 4))
+        max_tiles = p.get("max_tiles", None)
+        self._max_tiles = None if max_tiles is None else int(max_tiles)
+        self._graph = ht.build_tiling(
+            mode=self._mode, layers=self._layers, max_tiles=self._max_tiles
+        )
+
+        self._dynamics = str(p.get("dynamics", "cml"))
+        self._epsilon = float(p.get("epsilon", 0.28))
+        self._r = float(p.get("r", 3.82))
+        self._warmup_steps = int(p.get("warmup_steps", 10))
+        self._frames_per_step = int(p.get("frames_per_step", 4))
+        self._seed = int(p.get("seed", shot.seed))
+
+        self._drift_radius = float(p.get("drift_radius", 0.48))
+        self._drift_angle_deg = float(p.get("drift_angle_deg", 30.0))
+        self._drift_turns = float(p.get("drift_turns", 0.35))
+        self._rot0 = float(p.get("rotation_deg_start", 0.0))
+        self._rot_total = float(p.get("rotation_deg_total", 90.0))
+
+        self._disk_scale = float(p.get("disk_scale", 0.92))
+        self._edge_width_px = float(p.get("edge_width_px", 1.35))
+        self._color_cycles = float(p.get("color_cycles", 1.5))
+        self._color_phase = float(p.get("color_phase", 0.0))
+        self._samples = max(1, int(p.get("samples", 1)))
+        self._palette = get_palette(shot.palette.name)
+
+        engine = str(p.get("engine", "auto"))
+        self._engine = None
+        if engine in ("auto", "taichi") and ht._HAS_TAICHI:
+            _ensure_taichi(need_f64=True)
+            if ht.arch_supports_f64(ht.get_taichi_arch()):
+                self._engine = ht.HyperbolicTilingEngine(
+                    self.width, self.height, self._graph
+                )
+        elif engine == "taichi":
+            raise RuntimeError(
+                "hyperbolic_tiling: taichi engine requested but taichi is not installed"
+            )
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        ht = self._ht
+        states = ht.compute_tile_states(
+            self._graph,
+            frame_idx=frame_idx,
+            t=t,
+            dynamics=self._dynamics,
+            seed=self._seed,
+            epsilon=self._epsilon,
+            r=self._r,
+            warmup_steps=self._warmup_steps,
+            frames_per_step=self._frames_per_step,
+        )
+        a_t, theta_t = ht.camera_isometry_at(
+            t,
+            drift_radius=self._drift_radius,
+            drift_angle_deg=self._drift_angle_deg,
+            drift_turns=self._drift_turns,
+            rotation_deg_start=self._rot0,
+            rotation_deg_total=self._rot_total,
+        )
+        offsets = ht.supersample_offsets(self._samples)
+        acc = np.zeros((self.height, self.width, 3), dtype=np.float64)
+        for dx, dy in offsets:
+            if self._engine is not None and not getattr(self._engine, "_use_fallback", False):
+                acc += self._engine.render(
+                    states,
+                    palette=self._palette,
+                    a=a_t,
+                    theta=theta_t,
+                    disk_scale=self._disk_scale,
+                    edge_width_px=self._edge_width_px,
+                    color_cycles=self._color_cycles,
+                    color_phase=self._color_phase,
+                    sub_dx=dx,
+                    sub_dy=dy,
+                )
+            else:
+                acc += ht.render_tiling_numpy(
+                    self._graph,
+                    states,
+                    self.width,
+                    self.height,
+                    palette=self._palette,
+                    a=a_t,
+                    theta=theta_t,
+                    disk_scale=self._disk_scale,
+                    edge_width_px=self._edge_width_px,
+                    color_cycles=self._color_cycles,
+                    color_phase=self._color_phase,
+                    sub_dx=dx,
+                    sub_dy=dy,
+                )
+        return (acc / len(offsets)).astype(np.float32)
+
+
 # ---- helpers ----
 
 def shot_param(shot: Shot, key: str, default):
@@ -1068,3 +1201,4 @@ def _resize_to(img: np.ndarray, h: int, w: int) -> np.ndarray:
     ys = (np.linspace(0, ih - 1, h)).astype(np.int32)
     xs = (np.linspace(0, iw - 1, w)).astype(np.int32)
     return img[ys[:, None], xs[None, :]]
+

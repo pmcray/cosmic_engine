@@ -684,6 +684,31 @@ def t_fractal_morph(rng: random.Random):
     return ("fractal_dive", params, Camera(), "morph_zoom", palette)
 
 
+def t_hyperbolic_tiling(rng: random.Random):
+    """Non-Euclidean Poincare disk {7,3} or {3,7} hyperbolic lattice or
+    7-fold De Bruijn quasicrystal with coupled spatiotemporal wave dynamics."""
+    mode = rng.choice(["poincare_7_3", "poincare_7_3", "poincare_3_7", "quasicrystal_7"])
+    dynamics = rng.choice(["cml", "cml", "life_like"])
+    params = {
+        "mode": mode,
+        "layers": 4,
+        "dynamics": dynamics,
+        "epsilon": _r(rng, 0.22, 0.35),
+        "r": _r(rng, 3.76, 3.88),
+        "drift_radius": _r(rng, 0.38, 0.58),
+        "drift_angle_deg": _r(rng, 0.0, 360.0),
+        "drift_turns": _r(rng, 0.20, 0.50),
+        "rotation_deg_start": _r(rng, 0.0, 360.0),
+        "rotation_deg_total": _r(rng, 60.0, 140.0),
+        "color_cycles": _r(rng, 1.2, 2.2),
+        "color_phase": _r(rng, 0.0, 1.0),
+        "samples": 1,
+        "seed": _ri(rng, 0, 999_999),
+    }
+    palette = rng.choice(["trumbull_2001", "hubble_sii_ha_oiii"])
+    return ("hyperbolic_tiling", params, Camera(), "hyperbolic_glide", palette)
+
+
 # ---- Traveller world phrases ----------------------------------------
 #
 # Worlds come from the worlds package: the Foreven sector is generated
@@ -772,7 +797,7 @@ PHASES: tuple[Phase, ...] = (
         duration_frac=0.10,
         n_shots=(3, 4),
         templates=(t_kerr_disc, t_odyssey_infinite, t_jovian_grs, t_stellar_m,
-                   t_nebula, t_fractal_dive_shallow),
+                   t_nebula, t_fractal_dive_shallow, t_hyperbolic_tiling),
         palette_pool=("trumbull_2001", "hubble_sii_ha_oiii"),
         transition_to_next="slitscan",
     ),
@@ -781,7 +806,8 @@ PHASES: tuple[Phase, ...] = (
         duration_frac=0.10,
         n_shots=(2, 3),
         templates=(t_slitscan_tunnel, t_stargate_corridor, t_fractal_dive,
-                   t_kerr_disc, t_stargate_corridor, t_fractal_dive),
+                   t_kerr_disc, t_stargate_corridor, t_fractal_dive,
+                   t_hyperbolic_tiling),
         palette_pool=("trumbull_2001",),
         transition_kind="hard_cut",
         transition_to_next="slitscan",
@@ -820,7 +846,8 @@ PHASES: tuple[Phase, ...] = (
         duration_frac=0.12,
         n_shots=(3, 4),
         templates=(t_saturnian_drift, t_spiral_face_on, t_nebula, t_jovian_approach,
-                   t_odyssey_infinite_finale, t_fractal_dive_shallow),
+                   t_odyssey_infinite_finale, t_fractal_dive_shallow,
+                   t_hyperbolic_tiling),
         palette_pool=("nfb_universe_1960", "trumbull_2001"),
     ),
 )
