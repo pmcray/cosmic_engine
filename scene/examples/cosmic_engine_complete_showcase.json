@@ -1,0 +1,442 @@
+{
+  "shots": [
+    {
+      "id": "foreven_calandron_ringed_giant",
+      "renderer": "saturn_class",
+      "params": {
+        "atm_thickness": 0.06750672555014853,
+        "march_steps": 24,
+        "samples": 1,
+        "sun_dir": [
+          -0.7006770720902513,
+          0.6411549000378385,
+          -0.3130048478929713
+        ],
+        "seed": 346283,
+        "push_in_factor": 1.2523779440352658,
+        "rings_enable": 1,
+        "ring_brightness": 0.9670853206375742,
+        "ring_shadows_enable": 1,
+        "hex_enable": 0,
+        "hex_lat": 78.0,
+        "hex_amp": 0.47975380199482626,
+        "world": {
+          "name": "Calandron",
+          "uwp": "E522252-2",
+          "sector": "Foreven",
+          "hex": "1721",
+          "subsector": "K",
+          "body_type": "ringed_giant",
+          "mean_temp_k": 377.1,
+          "star": "M9 V",
+          "provider": "procedural",
+          "has_gas_giant": true,
+          "gas_giant_count": 2,
+          "parent_body": "Calandron Prime",
+          "parent_body_type": "gas_giant"
+        }
+      },
+      "camera": {
+        "position": [
+          -0.11914524795428694,
+          -0.1465543236452549,
+          -4.246158102655107
+        ],
+        "target": [
+          0.0,
+          0.026783981386163974,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 36.91189146175526,
+        "path_to": {
+          "position": [
+            -0.09535235287372623,
+            -0.14805567687232554,
+            -2.461247298564011
+          ],
+          "target": [
+            0.0,
+            0.11721743660087355,
+            0.0
+          ],
+          "up": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "fov_deg": 30.05687819925008,
+          "path_to": null
+        }
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 106,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 346283,
+      "motion_hint": "push_in"
+    },
+    {
+      "id": "schwenk_sensitive_chaos_filigree",
+      "renderer": "stratified_flow",
+      "params": {
+        "mode": "sensitive_chaos",
+        "strokes_start": 1.0,
+        "strokes_end": 7.5,
+        "samples": 1,
+        "seed": 1977
+      },
+      "camera": {
+        "position": [
+          0.0,
+          0.0,
+          -5.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 50.0,
+        "path_to": null
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 106,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 1977,
+      "motion_hint": "stratified_wave"
+    },
+    {
+      "id": "hofstadter_parquet_deformation",
+      "renderer": "hyperbolic_tiling",
+      "params": {
+        "mode": "parquet_deformation",
+        "layers": 4,
+        "dynamics": "cml",
+        "epsilon": 0.28,
+        "r": 3.82,
+        "drift_radius": 0.48,
+        "drift_angle_deg": 24.0,
+        "drift_turns": 0.35,
+        "rotation_deg_start": 0.0,
+        "rotation_deg_total": 90.0,
+        "color_cycles": 1.6,
+        "color_phase": 0.08,
+        "samples": 1,
+        "seed": 1977
+      },
+      "camera": {
+        "position": [
+          0.0,
+          0.0,
+          -5.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 50.0,
+        "path_to": null
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 106,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 1977,
+      "motion_hint": "hyperbolic_glide"
+    },
+    {
+      "id": "hyperbolic_stargate_7_3",
+      "renderer": "hyperbolic_tiling",
+      "params": {
+        "mode": "poincare_7_3",
+        "layers": 4,
+        "dynamics": "cml",
+        "epsilon": 0.28,
+        "r": 3.82,
+        "drift_radius": 0.52,
+        "drift_angle_deg": 28.0,
+        "drift_turns": 0.38,
+        "rotation_deg_start": 0.0,
+        "rotation_deg_total": 108.0,
+        "color_cycles": 1.6,
+        "color_phase": 0.1,
+        "samples": 1,
+        "seed": 1977
+      },
+      "camera": {
+        "position": [
+          0.0,
+          0.0,
+          -5.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 50.0,
+        "path_to": null
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 106,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 1977,
+      "motion_hint": "hyperbolic_glide"
+    },
+    {
+      "id": "heptabrot_hexagonal_fort",
+      "renderer": "fractal_dive",
+      "params": {
+        "location": "heptabrot_fort",
+        "center_re": "0.63520827949716101850031274409134268375",
+        "center_im": "0.00243353250872518039829854668518353625",
+        "power": 7,
+        "scale_start": 0.01,
+        "scale_end": 1e-14,
+        "rotation_deg_start": 60.0,
+        "rotation_deg_total": 90.0,
+        "samples": 1,
+        "iter_base": 320,
+        "iter_per_decade": 320,
+        "color_cycles": 5.0,
+        "color_phase": 0.0
+      },
+      "camera": {
+        "position": [
+          0.0,
+          0.0,
+          -5.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 50.0,
+        "path_to": null
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 106,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 1977,
+      "motion_hint": "deep_dive"
+    },
+    {
+      "id": "deep_time_sedimentation",
+      "renderer": "stratified_flow",
+      "params": {
+        "mode": "sand_strata",
+        "warmup_steps": 18,
+        "substeps_per_frame": 2,
+        "dt": 0.028,
+        "samples": 1,
+        "seed": 1977
+      },
+      "camera": {
+        "position": [
+          0.0,
+          0.0,
+          -5.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 50.0,
+        "path_to": null
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 106,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 1977,
+      "motion_hint": "stratified_wave"
+    },
+    {
+      "id": "ashby_ultrastable_ecosphere",
+      "renderer": "ecosphere",
+      "params": {
+        "rd_size": 72,
+        "n_shrimp": 9,
+        "warmup_steps": 16,
+        "substeps_per_frame": 4,
+        "dt": 0.042,
+        "circadian_period": 1.8,
+        "O2_star": 0.62,
+        "eta_crit": 0.14,
+        "perturbation_frame": 16,
+        "perturbation_strength": 0.21,
+        "orb_scale": 0.84,
+        "telemetry_overlay": true,
+        "samples": 1,
+        "seed": 1977
+      },
+      "camera": {
+        "position": [
+          0.0,
+          0.0,
+          -5.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "fov_deg": 50.0,
+        "path_to": null
+      },
+      "palette": {
+        "name": "trumbull_2001",
+        "intensity": 1.0
+      },
+      "duration_frames": 106,
+      "fps": 24,
+      "resolution": [
+        640,
+        360
+      ],
+      "seed": 1977,
+      "motion_hint": "homeostatic_cycle"
+    }
+  ],
+  "transitions": [
+    {
+      "from_shot": "foreven_calandron_ringed_giant",
+      "to_shot": "schwenk_sensitive_chaos_filigree",
+      "kind": "crossfade",
+      "duration_frames": 12,
+      "params": {
+        "histogram_strength": 0.65,
+        "smoothstep": true
+      }
+    },
+    {
+      "from_shot": "schwenk_sensitive_chaos_filigree",
+      "to_shot": "hofstadter_parquet_deformation",
+      "kind": "crossfade",
+      "duration_frames": 12,
+      "params": {
+        "histogram_strength": 0.65,
+        "smoothstep": true
+      }
+    },
+    {
+      "from_shot": "hofstadter_parquet_deformation",
+      "to_shot": "hyperbolic_stargate_7_3",
+      "kind": "crossfade",
+      "duration_frames": 12,
+      "params": {
+        "histogram_strength": 0.65,
+        "smoothstep": true
+      }
+    },
+    {
+      "from_shot": "hyperbolic_stargate_7_3",
+      "to_shot": "heptabrot_hexagonal_fort",
+      "kind": "crossfade",
+      "duration_frames": 12,
+      "params": {
+        "histogram_strength": 0.65,
+        "smoothstep": true
+      }
+    },
+    {
+      "from_shot": "heptabrot_hexagonal_fort",
+      "to_shot": "deep_time_sedimentation",
+      "kind": "crossfade",
+      "duration_frames": 12,
+      "params": {
+        "histogram_strength": 0.65,
+        "smoothstep": true
+      }
+    },
+    {
+      "from_shot": "deep_time_sedimentation",
+      "to_shot": "ashby_ultrastable_ecosphere",
+      "kind": "crossfade",
+      "duration_frames": 12,
+      "params": {
+        "histogram_strength": 0.65,
+        "smoothstep": true
+      }
+    }
+  ],
+  "title": "cosmic_engine_complete_showcase",
+  "schema_version": 1
+}

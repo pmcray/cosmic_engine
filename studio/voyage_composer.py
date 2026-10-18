@@ -732,6 +732,30 @@ def t_stratified_flow(rng: random.Random):
     return ("stratified_flow", params, Camera(), "stratified_wave", palette)
 
 
+def t_ecosphere(rng: random.Random):
+    """Hermetically sealed glass Ecosphere & W. Ross Ashby Ultrastable Homeostat
+    with circadian light cycle, 2D Gray-Scott algal morphogenesis, L-system
+    gorgonian frond, and swimming Halocaridina red shrimp."""
+    params = {
+        "rd_size": 72,
+        "n_shrimp": rng.choice([7, 9, 11]),
+        "warmup_steps": rng.choice([14, 16, 20]),
+        "substeps_per_frame": 4,
+        "dt": _r(rng, 0.038, 0.046),
+        "circadian_period": _r(rng, 1.5, 2.2),
+        "O2_star": _r(rng, 0.58, 0.66),
+        "eta_crit": _r(rng, 0.12, 0.16),
+        "perturbation_frame": rng.choice([14, 16, 20]),
+        "perturbation_strength": _r(rng, 0.19, 0.24),
+        "orb_scale": _r(rng, 0.80, 0.88),
+        "telemetry_overlay": True,
+        "samples": 1,
+        "seed": _ri(rng, 0, 999_999),
+    }
+    palette = rng.choice(["trumbull_2001", "hubble_sii_ha_oiii", "jwst_nircam"])
+    return ("ecosphere", params, Camera(), "homeostatic_cycle", palette)
+
+
 # ---- Traveller world phrases ----------------------------------------
 #
 # Worlds come from the worlds package: the Foreven sector is generated
@@ -863,7 +887,7 @@ PHASES: tuple[Phase, ...] = (
         n_shots=(4, 6),
         templates=(t_terrain, t_traveller_world, t_traveller_habitable,
                    t_ca_creatures, t_exoplanet, t_terrain, t_traveller_world,
-                   t_stratified_flow),
+                   t_stratified_flow, t_ecosphere),
         palette_pool=("jwst_nircam", "trumbull_2001"),
     ),
     Phase(
@@ -872,7 +896,7 @@ PHASES: tuple[Phase, ...] = (
         n_shots=(3, 4),
         templates=(t_saturnian_drift, t_spiral_face_on, t_nebula, t_jovian_approach,
                    t_odyssey_infinite_finale, t_fractal_dive_shallow,
-                   t_hyperbolic_tiling, t_stratified_flow),
+                   t_hyperbolic_tiling, t_stratified_flow, t_ecosphere),
         palette_pool=("nfb_universe_1960", "trumbull_2001"),
     ),
 )

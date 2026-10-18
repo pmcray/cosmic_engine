@@ -1218,6 +1218,7 @@ class StratifiedFlowRenderer(Renderer):
         self._samples = max(1, int(p.get("samples", 1)))
         self._palette = get_palette(shot.palette.name)
 
+        strokes_val = p.get("strokes", None)
         self._sim = sf.StratifiedFlowSimulator(
             mode=self._mode,
             seed=self._seed,
@@ -1230,6 +1231,10 @@ class StratifiedFlowRenderer(Renderer):
             n_billows=int(p.get("n_billows", 3)),
             theta_max_deg=float(p.get("theta_max_deg", 14.0)),
             rock_omega=float(p.get("rock_omega", 1.35)),
+            strokes=float(strokes_val) if strokes_val is not None else None,
+            strokes_start=float(p.get("strokes_start", 1.0)),
+            strokes_end=float(p.get("strokes_end", 7.5)),
+            total_frames=max(2, int(shot.duration_frames)),
         )
 
         engine = str(p.get("engine", "auto"))
@@ -1261,6 +1266,99 @@ class StratifiedFlowRenderer(Renderer):
                     self.width,
                     self.height,
                     palette=self._palette,
+                    sub_dx=dx,
+                    sub_dy=dy,
+                )
+        return (acc / len(offsets)).astype(np.float32)
+
+
+@register_renderer("ecosphere")
+class EcosphereRenderer(Renderer):
+    """Sealed Glass Ecosphere & Ashby Ultrastable Homeostat renderer
+    (`render.ecosphere`).
+
+    Expected params (all optional):
+        rd_size               : 2D Gray-Scott lattice side (default 72)
+        n_shrimp              : number of grazing Halocaridina red shrimp (default 9)
+        warmup_steps          : initial reaction-diffusion warmup steps (default 16)
+        substeps_per_frame    : simulation substeps per frame (default 4)
+        dt                    : timestep size (default 0.042)
+        circadian_period      : external light cycle period in seconds (default 1.8)
+        O2_star               : homeostatic dissolved oxygen setpoint (default 0.62)
+        eta_crit              : critical threshold on |O2(t) - O2*| (default 0.14)
+        perturbation_frame    : frame index of algal/anoxic perturbation (default 16)
+        perturbation_strength : amplitude of bloom/anoxic shock (default 0.21)
+        orb_scale             : glass orb diameter fraction of frame height (default 0.84)
+        telemetry_overlay     : bool, draw diegetic Ashby phase portrait (default True)
+        samples               : supersampling grid side (default 1)
+        seed                  : deterministic seed keyed via render.detrng (default shot.seed)
+        engine                : "auto" | "taichi" | "numpy"
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        from render import ecosphere as eco
+        from scene.palette import get_palette
+
+        p = shot.params
+        self._eco = eco
+        self._seed = int(p.get("seed", shot.seed))
+        self._samples = max(1, int(p.get("samples", 1)))
+        self._orb_scale = float(p.get("orb_scale", 0.84))
+        self._telemetry_overlay = bool(p.get("telemetry_overlay", True))
+        self._palette = get_palette(shot.palette.name)
+
+        self._sim = eco.EcosphereSimulator(
+            seed=self._seed,
+            rd_size=int(p.get("rd_size", 72)),
+            n_shrimp=int(p.get("n_shrimp", 9)),
+            warmup_steps=int(p.get("warmup_steps", 16)),
+            substeps_per_frame=int(p.get("substeps_per_frame", 4)),
+            dt=float(p.get("dt", 0.042)),
+            circadian_period=float(p.get("circadian_period", 1.8)),
+            O2_star=float(p.get("O2_star", 0.62)),
+            eta_crit=float(p.get("eta_crit", 0.14)),
+            perturbation_frame=int(p.get("perturbation_frame", 16)),
+            perturbation_strength=float(p.get("perturbation_strength", 0.21)),
+            telemetry_overlay=self._telemetry_overlay,
+        )
+
+        engine = str(p.get("engine", "auto"))
+        self._engine = None
+        if engine in ("auto", "taichi") and eco._HAS_TAICHI:
+            _ensure_taichi(need_f64=True)
+            if eco.arch_supports_f64(eco.get_taichi_arch()):
+                self._engine = eco.EcosphereEngine(
+                    self.width, self.height, self._sim
+                )
+        elif engine == "taichi":
+            raise RuntimeError(
+                "ecosphere: taichi engine requested but taichi is not installed"
+            )
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        eco = self._eco
+        state = self._sim.state_at(frame_idx)
+        offsets = eco.supersample_offsets(self._samples)
+        acc = np.zeros((self.height, self.width, 3), dtype=np.float64)
+        for dx, dy in offsets:
+            if self._engine is not None and not getattr(self._engine, "_use_fallback", False):
+                acc += self._engine.render(
+                    state,
+                    palette=self._palette,
+                    orb_scale=self._orb_scale,
+                    telemetry_overlay=self._telemetry_overlay,
+                    sub_dx=dx,
+                    sub_dy=dy,
+                )
+            else:
+                acc += eco.render_ecosphere_frame(
+                    state,
+                    self.width,
+                    self.height,
+                    palette=self._palette,
+                    orb_scale=self._orb_scale,
+                    telemetry_overlay=self._telemetry_overlay,
                     sub_dx=dx,
                     sub_dy=dy,
                 )
