@@ -687,7 +687,7 @@ def t_fractal_morph(rng: random.Random):
 def t_hyperbolic_tiling(rng: random.Random):
     """Non-Euclidean Poincare disk {7,3} or {3,7} hyperbolic lattice or
     7-fold De Bruijn quasicrystal with coupled spatiotemporal wave dynamics."""
-    mode = rng.choice(["poincare_7_3", "poincare_7_3", "poincare_3_7", "quasicrystal_7"])
+    mode = rng.choice(["poincare_7_3", "poincare_7_3", "poincare_3_7", "quasicrystal_7", "parquet_deformation"])
     dynamics = rng.choice(["cml", "cml", "life_like"])
     params = {
         "mode": mode,
@@ -710,9 +710,10 @@ def t_hyperbolic_tiling(rng: random.Random):
 
 
 def t_stratified_flow(rng: random.Random):
-    """Rocking two-liquid Kelvin-Helmholtz billow roll-up or multi-species
-    granular falling-sand sedimentation across a buoyant bubble barrier."""
-    mode = rng.choice(["kelvin_helmholtz", "sand_strata"])
+    """Rocking two-liquid Kelvin-Helmholtz billow roll-up, multi-species
+    granular falling-sand sedimentation across a buoyant bubble barrier,
+    or Sensitive Chaos recursive von Kármán vortex street filigree."""
+    mode = rng.choice(["kelvin_helmholtz", "sand_strata", "sensitive_chaos"])
     params = {
         "mode": mode,
         "warmup_steps": rng.choice([16, 18, 22]),
@@ -722,6 +723,8 @@ def t_stratified_flow(rng: random.Random):
         "shear_velocity": _r(rng, 0.45, 0.60),
         "n_billows": rng.choice([2, 3, 4]),
         "theta_max_deg": _r(rng, 11.0, 17.0),
+        "strokes_start": 1.0,
+        "strokes_end": _r(rng, 6.5, 8.0),
         "samples": 1,
         "seed": _ri(rng, 0, 999_999),
     }

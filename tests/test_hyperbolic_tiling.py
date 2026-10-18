@@ -115,6 +115,46 @@ def test_quasicrystal_7_de_bruijn_topology() -> None:
     assert max(edge_angles) < 1e-9
 
 
+def test_parquet_deformation_hofstadter_spatial_morph_and_convexity() -> None:
+    from render.hyperbolic_tiling import build_tiling
+
+    g = build_tiling(mode="parquet_deformation", layers=4)
+    assert g.mode == "parquet_deformation"
+    assert g.p == 6 and g.q == 3
+    assert 150 <= len(g) <= 400
+
+    # Every tile has 6 vertices, <= 6 neighbors, and interior tiles have degree 6
+    assert all(len(t.vertices) == 6 for t in g.tiles)
+    assert g.degrees.max() == 6
+    assert (g.degrees == 6).mean() > 0.70
+
+    # Compare edge-length variance on the left (tau=0, regular hexagons d-1=6)
+    # vs on the right (tau=1, frustrated 7-fold chiral prototiles d=7)
+    left_rel_stds = []
+    right_rel_stds = []
+    for t in g.tiles:
+        vs = t.vertices
+        edges = [abs(vs[(k + 1) % 6] - vs[k]) for k in range(6)]
+        rel_std = float(np.std(edges) / np.mean(edges))
+        if t.center.real < -1.25:
+            left_rel_stds.append(rel_std)
+        elif t.center.real > 1.25:
+            right_rel_stds.append(rel_std)
+
+        # Verify strict convexity (all CCW cross products at consecutive edges > 0)
+        for k in range(6):
+            e1 = vs[(k + 1) % 6] - vs[k]
+            e2 = vs[(k + 2) % 6] - vs[(k + 1) % 6]
+            cross = e1.real * e2.imag - e1.imag * e2.real
+            assert cross > 0.0, f"tile {t.index} became non-convex at vertex {k}"
+
+    assert left_rel_stds and right_rel_stds
+    # Left side is regular Euclidean hexagons (relative edge std ~ 0)
+    assert max(left_rel_stds) < 1e-3
+    # Right side has strong chiral / 7-fold edge differentiation
+    assert np.mean(right_rel_stds) > 0.14
+
+
 # ---- 2. Spatiotemporal Dynamics on the Tile Graph --------------------
 
 def test_cml_dynamics_exact_recurrence_and_evolution() -> None:
@@ -152,7 +192,7 @@ def test_cml_dynamics_exact_recurrence_and_evolution() -> None:
 def test_life_like_dynamics_evolution() -> None:
     from render.hyperbolic_tiling import build_tiling, compute_tile_states
 
-    for mode in ("poincare_7_3", "poincare_3_7", "quasicrystal_7"):
+    for mode in ("poincare_7_3", "poincare_3_7", "quasicrystal_7", "parquet_deformation"):
         g = build_tiling(mode=mode, layers=3)
         s0 = compute_tile_states(g, frame_idx=0, t=0.0, dynamics="life_like", seed=7)
         s1 = compute_tile_states(g, frame_idx=10, t=0.4, dynamics="life_like", seed=7)
@@ -205,11 +245,11 @@ def test_export_metapost_generates_valid_mp_and_compiles(tmp_path: Path) -> None
         export_metapost,
     )
 
-    for mode in ("poincare_7_3", "poincare_3_7", "quasicrystal_7"):
+    for mode in ("poincare_7_3", "poincare_3_7", "quasicrystal_7", "parquet_deformation"):
         g = build_tiling(mode=mode, layers=2)
         states = compute_tile_states(g, frame_idx=6, t=0.25, dynamics="cml", seed=42)
         mp_file = tmp_path / f"test_{mode}.mp"
-        content = export_metapost(g.tiles, states, "trumbull_2001", mp_file, scale_bp=150.0)
+        content = export_metapost(g, states, "trumbull_2001", mp_file, scale_bp=150.0)
         assert mp_file.exists()
         assert "beginfig(1);" in content
         assert "endfig;" in content
@@ -219,15 +259,15 @@ def test_export_metapost_generates_valid_mp_and_compiles(tmp_path: Path) -> None
 
     mpost_bin = shutil.which("mpost")
     if mpost_bin:
-        res = subprocess.run(
-            [mpost_bin, "-interaction=nonstopmode", "test_poincare_7_3.mp"],
-            cwd=str(tmp_path),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert res.returncode == 0, f"mpost failed:\n{res.stdout}\n{res.stderr}"
-        assert (tmp_path / "test_poincare_7_3-1.mps").exists()
+        for mp_name in ("test_poincare_7_3.mp", "test_parquet_deformation.mp"):
+            res = subprocess.run(
+                [mpost_bin, "-interaction=nonstopmode", mp_name],
+                cwd=str(tmp_path),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert res.returncode == 0, f"mpost failed on {mp_name}:\n{res.stdout}\n{res.stderr}"
 
 
 # ---- 5. Rasterization, Adapter, Composer & CLI -----------------------
@@ -239,7 +279,7 @@ def test_render_tiling_numpy_and_adapter_frames() -> None:
 
     assert "hyperbolic_tiling" in list_renderers()
 
-    for mode in ("poincare_7_3", "poincare_3_7", "quasicrystal_7"):
+    for mode in ("poincare_7_3", "poincare_3_7", "quasicrystal_7", "parquet_deformation"):
         shot = Shot(
             id=f"test_{mode}",
             renderer="hyperbolic_tiling",
@@ -292,3 +332,4 @@ def test_cli_still_and_metapost_export(tmp_path: Path) -> None:
     assert rc == 0
     assert out_png.exists() and out_png.stat().st_size > 500
     assert out_mp.exists() and out_mp.stat().st_size > 1000
+

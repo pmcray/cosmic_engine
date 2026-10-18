@@ -15,6 +15,11 @@ geometries with coupled spatiotemporal dynamics on the tile adjacency graph:
    * `mode='quasicrystal_7'`: 2D aperiodic 7-fold Penrose / De Bruijn
      rhombic tiling generated via the dual-grid (heptagrid) method from Z^7
      with 7-fold orientational symmetry.
+   * `mode='parquet_deformation'`: Hofstadter / William Huff Parquet
+     Deformation ("Fylfot Flipflop" / Steve Reich phase piece) continuously
+     morphing a regular Euclidean hexagonal lattice (d-1 = 6) across space
+     into frustrated, chiral 7-fold saddle-sheared prototiles (d = 7) with
+     coupled spatiotemporal CML/CA graph dynamics.
 
 2. Spatiotemporal Dynamics on the Tile Graph G = (V, E):
    * `dynamics='cml'`: Coupled Map Lattice / diffusive nonlinear wave on the
@@ -33,8 +38,8 @@ geometries with coupled spatiotemporal dynamics on the tile adjacency graph:
 4. Native MetaPost Vector Exporter (`--export-metapost`):
    * `export_metapost(tiles, states, palette, out_path, scale_bp=200.0)`
      emits a self-contained MetaPost figure (`beginfig(1); ... endfig;`)
-     drawing exact hyperbolic geodesic arcs (or quasicrystal rhombi) and
-     filling each polygon with its computed RGB/grayscale state.
+     drawing exact hyperbolic geodesic arcs (or quasicrystal rhombi / parquet
+     deformation strips) and filling each polygon with its computed RGB state.
 """
 from __future__ import annotations
 
@@ -63,7 +68,7 @@ except Exception:  # pragma: no cover
     ti = None
 
 
-VALID_MODES = ("poincare_7_3", "poincare_3_7", "quasicrystal_7")
+VALID_MODES = ("poincare_7_3", "poincare_3_7", "quasicrystal_7", "parquet_deformation")
 VALID_DYNAMICS = ("cml", "life_like")
 
 
@@ -502,6 +507,175 @@ def _build_quasicrystal_7(layers: int = 4,
     )
 
 
+def parquet_deform_vertices(base_verts: np.ndarray,
+                            parities: np.ndarray,
+                            r0: float,
+                            phase: float = 0.0) -> np.ndarray:
+    """Apply the Hofstadter / William Huff Parquet Deformation field across space:
+      * Left edge (x <= -1.10): tau(x) = 0 -> exact regular Euclidean hexagons (d-1 = 6).
+      * Rightward (x -> +1.10): tau(x) -> 1 -> bipartite chiral fylfot / hat-like edge
+        bifurcation superimposed with an incompressible 7-fold heptagrid saddle shear (d = 7).
+      * Temporal `phase`: drives the Steve Reich adiabatic phase drift across the lattice.
+    """
+    x0 = base_verts.real
+    y0 = base_verts.imag
+    u = np.clip((x0 + 1.10) / 2.20, 0.0, 1.0)
+    tau = u * u * (3.0 - 2.0 * u)
+
+    # 7-fold De Bruijn heptagrid wavevectors q_m = (cos(2*pi*m/7), sin(2*pi*m/7))
+    psi7 = np.zeros_like(x0)
+    dx_shear = np.zeros_like(x0)
+    dy_shear = np.zeros_like(y0)
+    ph = float(phase)
+
+    for m in range(7):
+        alpha_m = 2.0 * math.pi * m / 7.0
+        ca = math.cos(alpha_m)
+        sa = math.sin(alpha_m)
+        proj = x0 * ca + y0 * sa
+        psi7 += np.cos(3.6 * proj + ph + alpha_m)
+        sgn_m = 1.0 if (m % 2 == 0) else -1.0
+        wave_m = np.sin(3.2 * proj - 0.7 * ph + alpha_m)
+        dx_shear += (sgn_m / 3.5) * sa * wave_m
+        dy_shear -= (sgn_m / 3.5) * ca * wave_m
+
+    chi = 1.8 * x0 + 2.1 * y0 + 0.35 * psi7 + ph
+    bipartite_amp = parities * tau * (0.21 * float(r0))
+    dx = bipartite_amp * np.cos(chi) + (tau ** 1.25) * (0.20 * float(r0)) * dx_shear
+    dy = bipartite_amp * np.sin(chi) + (tau ** 1.25) * (0.20 * float(r0)) * dy_shear
+    return base_verts + (dx + 1j * dy)
+
+
+def _build_parquet_deformation(layers: int = 4,
+                               max_tiles: int | None = None) -> TilingGraph:
+    """Generate a gapless planar Hofstadter Parquet Deformation tiling strip.
+
+    Continuously deforms a regular hexagonal honeycomb lattice (d-1 = 6) on the left
+    into frustrated, chiral 7-fold saddle-sheared prototiles (d = 7) on the right.
+    """
+    if layers < 0:
+        raise ValueError("layers must be >= 0")
+
+    n_rows = 2 * max(1, int(layers)) + 3
+    n_cols = int(round(n_rows * 2.1))
+    r0 = 1.15 / (math.sqrt(3.0) * (n_rows / 2.0))
+
+    # Candidate hexagonal cells across the widescreen strip [-2.0, 2.0] x [-1.15, 1.15]
+    raw_cells: list[tuple[float, int, int, float, float]] = []
+    half_c = n_cols // 2
+    half_r = n_rows // 2
+    for c in range(-half_c, half_c + 1):
+        for r in range(-half_r, half_r + 1):
+            xc = c * 1.5 * r0
+            yc = (r + 0.5 * (c & 1)) * math.sqrt(3.0) * r0
+            if abs(xc) > 2.05 or abs(yc) > 1.18:
+                continue
+            r2 = xc * xc + yc * yc
+            raw_cells.append((r2, r, c, xc, yc))
+
+    raw_cells.sort(key=lambda item: item[0])
+    if max_tiles is not None:
+        raw_cells = raw_cells[: int(max_tiles)]
+
+    # Deduplicate shared honeycomb vertices by quantized grid key so adjacent tiles
+    # share exact vertex indices with 100% watertight edges.
+    vert_key_to_id: dict[tuple[int, int], int] = {}
+    base_verts_list: list[complex] = []
+    parities_list: list[float] = []
+    tile_vids: list[tuple[int, ...]] = []
+    tile_kinds: list[int] = []
+
+    hex_angles = [math.pi * k / 3.0 for k in range(6)]
+    for _r2, r, c, xc, yc in raw_cells:
+        vids: list[int] = []
+        for k, ang in enumerate(hex_angles):
+            vx = xc + r0 * math.cos(ang)
+            vy = yc + r0 * math.sin(ang)
+            qkey = (int(round(vx / (r0 * 1e-3))), int(round(vy / (r0 * 1e-3))))
+            if qkey not in vert_key_to_id:
+                vert_key_to_id[qkey] = len(base_verts_list)
+                base_verts_list.append(complex(vx, vy))
+                parities_list.append(1.0 if (k % 2 == 0) else -1.0)
+            vids.append(vert_key_to_id[qkey])
+        tile_vids.append(tuple(vids))
+        # Assign prototile kind (0..6) from 7-fold spatial phase + sublattice index
+        kind = int(math.floor(((xc + 2.0) * 3.5 + (r - c) * 0.5) % 7.0))
+        tile_kinds.append(kind)
+
+    base_verts_arr = np.asarray(base_verts_list, dtype=np.complex128)
+    parities_arr = np.asarray(parities_list, dtype=np.float64)
+    deformed_verts = parquet_deform_vertices(base_verts_arr, parities_arr, r0=r0, phase=0.0)
+
+    n_tiles = len(tile_vids)
+    edge_to_tiles: dict[tuple[int, int], list[int]] = {}
+    for tid, vids in enumerate(tile_vids):
+        for k in range(6):
+            u, v = vids[k], vids[(k + 1) % 6]
+            e = (u, v) if u < v else (v, u)
+            edge_to_tiles.setdefault(e, []).append(tid)
+
+    adj_sets: list[set[int]] = [set() for _ in range(n_tiles)]
+    for tids in edge_to_tiles.values():
+        if len(tids) == 2:
+            a, b = tids[0], tids[1]
+            adj_sets[a].add(b)
+            adj_sets[b].add(a)
+
+    adjacency = [sorted(s) for s in adj_sets]
+
+    # BFS layer shells from central tile 0
+    tile_layers = [0] * n_tiles
+    if n_tiles > 0:
+        visited = {0}
+        queue = [0]
+        cur_layer = 0
+        while queue:
+            next_q = []
+            for u in queue:
+                tile_layers[u] = min(int(layers), cur_layer)
+                for v in adjacency[u]:
+                    if v not in visited:
+                        visited.add(v)
+                        next_q.append(v)
+            queue = next_q
+            cur_layer += 1
+
+    centers = np.zeros(n_tiles, dtype=np.complex128)
+    tiles: list[Tile] = []
+    for tid in range(n_tiles):
+        vids = tile_vids[tid]
+        tvs = tuple(complex(deformed_verts[vid]) for vid in vids)
+        tc = sum(tvs) / 6.0
+        centers[tid] = tc
+        tiles.append(
+            Tile(
+                index=tid,
+                center=tc,
+                vertices=tvs,
+                vertex_ids=vids,
+                neighbors=adjacency[tid],
+                layer=tile_layers[tid],
+                kind=tile_kinds[tid],
+            )
+        )
+
+    graph = TilingGraph(
+        mode="parquet_deformation",
+        p=6,
+        q=3,
+        layers=int(layers),
+        tiles=tiles,
+        vertices=deformed_verts,
+        centers=centers,
+        adjacency=adjacency,
+        degrees=np.asarray([len(a) for a in adjacency], dtype=np.int32),
+    )
+    graph._parquet_base_verts = base_verts_arr  # type: ignore[attr-defined]
+    graph._parquet_parities = parities_arr      # type: ignore[attr-defined]
+    graph._parquet_r0 = float(r0)               # type: ignore[attr-defined]
+    return graph
+
+
 def build_tiling(mode: str = "poincare_7_3",
                  layers: int = 4,
                  max_tiles: int | None = None) -> TilingGraph:
@@ -514,8 +688,10 @@ def build_tiling(mode: str = "poincare_7_3",
             _TILING_CACHE[key] = _build_poincare_pq(mode, 7, 3, layers=layers, max_tiles=max_tiles)
         elif mode == "poincare_3_7":
             _TILING_CACHE[key] = _build_poincare_pq(mode, 3, 7, layers=layers, max_tiles=max_tiles)
-        else:
+        elif mode == "quasicrystal_7":
             _TILING_CACHE[key] = _build_quasicrystal_7(layers=layers, max_tiles=max_tiles)
+        else:
+            _TILING_CACHE[key] = _build_parquet_deformation(layers=layers, max_tiles=max_tiles)
     return _TILING_CACHE[key]
 
 
@@ -750,6 +926,15 @@ def _prepare_transformed_geometry(graph: TilingGraph,
     if is_poincare:
         t_verts_all = mobius_transform(graph.vertices, a=a, theta=theta)
         t_centers = mobius_transform(graph.centers, a=a, theta=theta)
+    elif graph.mode == "parquet_deformation" and hasattr(graph, "_parquet_base_verts"):
+        phase = float(theta) + 2.0 * math.pi * float(complex(a).real)
+        t_verts_all = parquet_deform_vertices(
+            graph._parquet_base_verts,
+            graph._parquet_parities,
+            r0=graph._parquet_r0,
+            phase=phase,
+        )
+        t_centers = graph.centers.copy()
     else:
         # For Euclidean quasicrystal_7, apply 2D pan + rotation while keeping tiling centered
         rot = cmath.exp(1j * float(theta))
@@ -768,7 +953,7 @@ def _prepare_transformed_geometry(graph: TilingGraph,
         tc = complex(t_centers[tid])
         v_mean = sum(tvs) / float(p)
         # Midpoint blend ensures `tc` is always strictly interior even for extreme boundary distortion
-        tc_int = 0.5 * (tc + v_mean)
+        tc_int = v_mean if graph.mode == "parquet_deformation" else 0.5 * (tc + v_mean)
         t_centers[tid] = tc_int
 
         xs = [v.real for v in tvs]
@@ -958,8 +1143,9 @@ def export_metapost(tiles: TilingGraph | Sequence[Tile],
                     color_cycles: float = 1.5,
                     color_phase: float = 0.0) -> str:
     """Export a self-contained, valid MetaPost figure (`beginfig(1); ... endfig;`)
-    drawing the exact hyperbolic geodesic arcs (or quasicrystal rhombi) and filling
-    each polygon with its computed RGB/grayscale state for native OpTeX/MetaPost print.
+    drawing the exact hyperbolic geodesic arcs (or quasicrystal rhombi / parquet
+    deformation strip) and filling each polygon with its computed RGB/grayscale
+    state for native OpTeX/MetaPost print.
     """
     if isinstance(tiles, TilingGraph):
         tile_list = tiles.tiles
@@ -968,6 +1154,8 @@ def export_metapost(tiles: TilingGraph | Sequence[Tile],
         tile_list = list(tiles)
         if mode is not None:
             resolved_mode = mode
+        elif tile_list and len(tile_list[0].vertices) == 6:
+            resolved_mode = "parquet_deformation"
         elif tile_list and len(tile_list[0].vertices) == 4:
             resolved_mode = "quasicrystal_7"
         elif tile_list and len(tile_list[0].vertices) == 3:
@@ -988,19 +1176,38 @@ def export_metapost(tiles: TilingGraph | Sequence[Tile],
     t_verts_per_tile: list[tuple[complex, ...]] = []
     kinds = np.zeros(n_tiles, dtype=np.float64)
 
+    parquet_verts_override = None
+    if (
+        resolved_mode == "parquet_deformation"
+        and isinstance(tiles, TilingGraph)
+        and hasattr(tiles, "_parquet_base_verts")
+        and (abs(a) > 1e-12 or abs(theta) > 1e-12)
+    ):
+        phase = float(theta) + 2.0 * math.pi * float(complex(a).real)
+        parquet_verts_override = parquet_deform_vertices(
+            tiles._parquet_base_verts,
+            tiles._parquet_parities,
+            r0=tiles._parquet_r0,
+            phase=phase,
+        )
+
     for idx, t_obj in enumerate(tile_list):
         kinds[idx] = float(getattr(t_obj, "kind", 0))
-        vs = tuple(complex(v) for v in t_obj.vertices)
-        tc = complex(t_obj.center)
-        if abs(a) > 1e-12 or abs(theta) > 1e-12:
-            if is_poincare:
-                vs = tuple(complex(mobius_transform(v, a=a, theta=theta)) for v in vs)
-                tc = complex(mobius_transform(tc, a=a, theta=theta))
-            else:
-                rot = cmath.exp(1j * float(theta))
-                pan = 0.35 * complex(a)
-                vs = tuple((v - pan) * rot for v in vs)
-                tc = (tc - pan) * rot
+        if parquet_verts_override is not None:
+            vs = tuple(complex(parquet_verts_override[vid]) for vid in t_obj.vertex_ids)
+            tc = sum(vs) / float(len(vs))
+        else:
+            vs = tuple(complex(v) for v in t_obj.vertices)
+            tc = complex(t_obj.center)
+            if abs(a) > 1e-12 or abs(theta) > 1e-12:
+                if is_poincare:
+                    vs = tuple(complex(mobius_transform(v, a=a, theta=theta)) for v in vs)
+                    tc = complex(mobius_transform(tc, a=a, theta=theta))
+                elif resolved_mode != "parquet_deformation":
+                    rot = cmath.exp(1j * float(theta))
+                    pan = 0.35 * complex(a)
+                    vs = tuple((v - pan) * rot for v in vs)
+                    tc = (tc - pan) * rot
         t_centers[idx] = tc
         t_verts_per_tile.append(vs)
 
@@ -1028,6 +1235,9 @@ def export_metapost(tiles: TilingGraph | Sequence[Tile],
 
     if is_poincare:
         lines.append("  boundary := fullcircle scaled (2*R);")
+        lines.append(f"  fill boundary withcolor ({bg_r:.4f}, {bg_g:.4f}, {bg_b:.4f});")
+    elif resolved_mode == "parquet_deformation":
+        lines.append("  boundary := (-1.78*R, -R)--(1.78*R, -R)--(1.78*R, R)--(-1.78*R, R)--cycle;")
         lines.append(f"  fill boundary withcolor ({bg_r:.4f}, {bg_g:.4f}, {bg_b:.4f});")
     else:
         lines.append("  boundary := unitsquare shifted (-0.5, -0.5) scaled (2.1*R);")
@@ -1066,7 +1276,7 @@ def export_metapost(tiles: TilingGraph | Sequence[Tile],
         lines.append(f"  fill p withcolor ({r_c:.4f}, {g_c:.4f}, {b_c:.4f});")
         lines.append(f"  draw p withcolor ({stroke_r:.4f}, {stroke_g:.4f}, {stroke_b:.4f});")
 
-    if is_poincare:
+    if is_poincare or resolved_mode == "parquet_deformation":
         lines.append("  clip currentpicture to boundary;")
         lines.append("  pickup pencircle scaled 1.2bp;")
         lines.append(f"  draw boundary withcolor ({stroke_r:.4f}, {stroke_g:.4f}, {stroke_b:.4f});")
