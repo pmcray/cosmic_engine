@@ -709,6 +709,26 @@ def t_hyperbolic_tiling(rng: random.Random):
     return ("hyperbolic_tiling", params, Camera(), "hyperbolic_glide", palette)
 
 
+def t_stratified_flow(rng: random.Random):
+    """Rocking two-liquid Kelvin-Helmholtz billow roll-up or multi-species
+    granular falling-sand sedimentation across a buoyant bubble barrier."""
+    mode = rng.choice(["kelvin_helmholtz", "sand_strata"])
+    params = {
+        "mode": mode,
+        "warmup_steps": rng.choice([16, 18, 22]),
+        "substeps_per_frame": 2,
+        "dt": _r(rng, 0.024, 0.032),
+        "atwood": _r(rng, 0.15, 0.22),
+        "shear_velocity": _r(rng, 0.45, 0.60),
+        "n_billows": rng.choice([2, 3, 4]),
+        "theta_max_deg": _r(rng, 11.0, 17.0),
+        "samples": 1,
+        "seed": _ri(rng, 0, 999_999),
+    }
+    palette = rng.choice(["trumbull_2001", "jwst_nircam", "hubble_sii_ha_oiii"])
+    return ("stratified_flow", params, Camera(), "stratified_wave", palette)
+
+
 # ---- Traveller world phrases ----------------------------------------
 #
 # Worlds come from the worlds package: the Foreven sector is generated
@@ -797,7 +817,8 @@ PHASES: tuple[Phase, ...] = (
         duration_frac=0.10,
         n_shots=(3, 4),
         templates=(t_kerr_disc, t_odyssey_infinite, t_jovian_grs, t_stellar_m,
-                   t_nebula, t_fractal_dive_shallow, t_hyperbolic_tiling),
+                   t_nebula, t_fractal_dive_shallow, t_hyperbolic_tiling,
+                   t_stratified_flow),
         palette_pool=("trumbull_2001", "hubble_sii_ha_oiii"),
         transition_to_next="slitscan",
     ),
@@ -838,7 +859,8 @@ PHASES: tuple[Phase, ...] = (
         duration_frac=0.16,
         n_shots=(4, 6),
         templates=(t_terrain, t_traveller_world, t_traveller_habitable,
-                   t_ca_creatures, t_exoplanet, t_terrain, t_traveller_world),
+                   t_ca_creatures, t_exoplanet, t_terrain, t_traveller_world,
+                   t_stratified_flow),
         palette_pool=("jwst_nircam", "trumbull_2001"),
     ),
     Phase(
@@ -847,7 +869,7 @@ PHASES: tuple[Phase, ...] = (
         n_shots=(3, 4),
         templates=(t_saturnian_drift, t_spiral_face_on, t_nebula, t_jovian_approach,
                    t_odyssey_infinite_finale, t_fractal_dive_shallow,
-                   t_hyperbolic_tiling),
+                   t_hyperbolic_tiling, t_stratified_flow),
         palette_pool=("nfb_universe_1960", "trumbull_2001"),
     ),
 )

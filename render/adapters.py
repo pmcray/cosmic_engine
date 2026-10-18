@@ -1185,6 +1185,88 @@ class HyperbolicTilingRenderer(Renderer):
         return (acc / len(offsets)).astype(np.float32)
 
 
+@register_renderer("stratified_flow")
+class StratifiedFlowRenderer(Renderer):
+    """Stratified two-fluid Kelvin-Helmholtz wave machine and multi-species
+    granular falling-sand sedimentation renderer (`render.stratified_flow`).
+
+    Expected params (all optional):
+        mode              : "kelvin_helmholtz" (default) | "sand_strata"
+        warmup_steps      : initial warmup steps before frame 0 (default 18)
+        substeps_per_frame: simulation substeps per frame (default 2)
+        dt                : timestep size (default 0.028)
+        atwood            : Boussinesq Atwood number A_T (default 0.18)
+        viscosity         : interfacial damping (default 0.004)
+        shear_velocity    : initial counter-flow shear velocity (default 0.52)
+        n_billows         : number of primary KH billow cores (default 3)
+        theta_max_deg     : peak rocking gravity angle in degrees (default 14.0)
+        rock_omega        : rocking angular frequency (default 1.35)
+        samples           : supersampling grid side (default 1)
+        seed              : deterministic seed keyed via render.detrng (default shot.seed)
+        engine            : "auto" | "taichi" | "numpy"
+    """
+
+    def __init__(self, shot: Shot):
+        super().__init__(shot)
+        from render import stratified_flow as sf
+        from scene.palette import get_palette
+
+        p = shot.params
+        self._sf = sf
+        self._mode = str(p.get("mode", "kelvin_helmholtz"))
+        self._seed = int(p.get("seed", shot.seed))
+        self._samples = max(1, int(p.get("samples", 1)))
+        self._palette = get_palette(shot.palette.name)
+
+        self._sim = sf.StratifiedFlowSimulator(
+            mode=self._mode,
+            seed=self._seed,
+            warmup_steps=int(p.get("warmup_steps", 18)),
+            substeps_per_frame=int(p.get("substeps_per_frame", 2)),
+            dt=float(p.get("dt", 0.028)),
+            atwood=float(p.get("atwood", 0.18)),
+            viscosity=float(p.get("viscosity", 0.004)),
+            shear_velocity=float(p.get("shear_velocity", 0.52)),
+            n_billows=int(p.get("n_billows", 3)),
+            theta_max_deg=float(p.get("theta_max_deg", 14.0)),
+            rock_omega=float(p.get("rock_omega", 1.35)),
+        )
+
+        engine = str(p.get("engine", "auto"))
+        self._engine = None
+        if engine in ("auto", "taichi") and sf._HAS_TAICHI:
+            _ensure_taichi(need_f64=True)
+            if sf.arch_supports_f64(sf.get_taichi_arch()):
+                self._engine = sf.StratifiedFlowEngine(
+                    self.width, self.height, self._sim
+                )
+        elif engine == "taichi":
+            raise RuntimeError(
+                "stratified_flow: taichi engine requested but taichi is not installed"
+            )
+
+    def render_frame(self, frame_idx: int, t: float, camera: Camera) -> np.ndarray:
+        sf = self._sf
+        state = self._sim.state_at(frame_idx)
+        offsets = sf.supersample_offsets(self._samples)
+        acc = np.zeros((self.height, self.width, 3), dtype=np.float64)
+        for dx, dy in offsets:
+            if self._engine is not None and not getattr(self._engine, "_use_fallback", False):
+                acc += self._engine.render(
+                    state, palette=self._palette, sub_dx=dx, sub_dy=dy
+                )
+            else:
+                acc += sf.render_stratified_frame(
+                    state,
+                    self.width,
+                    self.height,
+                    palette=self._palette,
+                    sub_dx=dx,
+                    sub_dy=dy,
+                )
+        return (acc / len(offsets)).astype(np.float32)
+
+
 # ---- helpers ----
 
 def shot_param(shot: Shot, key: str, default):
@@ -1201,4 +1283,3 @@ def _resize_to(img: np.ndarray, h: int, w: int) -> np.ndarray:
     ys = (np.linspace(0, ih - 1, h)).astype(np.int32)
     xs = (np.linspace(0, iw - 1, w)).astype(np.int32)
     return img[ys[:, None], xs[None, :]]
-
