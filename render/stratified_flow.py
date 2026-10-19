@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover
     ti = None
 
 
-VALID_MODES = ("kelvin_helmholtz", "sand_strata")
+VALID_MODES = ("kelvin_helmholtz", "sand_strata", "sensitive_chaos")
 
 # Salt constants for deterministic RNG streams via render.detrng
 S_KH_MODE = 0x13579BDF
@@ -70,6 +70,8 @@ S_KH_PHASE = 0x2468ACE1
 S_SAND_BUBBLE = 0x31415927
 S_SAND_PLUME = 0x27182818
 S_SAND_GRAIN = 0x16180339
+S_SC_VORTEX = 0x517CC1B7
+S_SC_PASS = 0x6A09E667
 
 
 # ============================================================
@@ -182,6 +184,13 @@ class StratifiedFlowState:
     reservoir_bot: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
     bubbles: list[tuple[float, float, float]] = field(default_factory=list)  # (bx, by, br)
     plumes: list[dict] = field(default_factory=list)                 # active falling plumes
+
+    # Mode 3: sensitive_chaos state (Schwenk / Hofstadter Fig 16-7 Bénard-von Kármán wake)
+    sc_strokes: float = 1.0
+    sc_passes: list[dict] = field(default_factory=list)
+    sc_vortices: list[dict] = field(default_factory=list)
+    sc_filaments: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
+
 
 
 # ============================================================
@@ -544,15 +553,254 @@ def _step_sand_strata(state: StratifiedFlowState,
 
 
 # ============================================================
+# Mode 3: Sensitive Chaos — Bénard–von Kármán Wake & Smale Horseshoe Filigree
+# ============================================================
+
+def _build_sensitive_chaos_passes(strokes: float,
+                                  seed: int = 42,
+                                  time_phase: float = 0.0) -> tuple[list[dict], list[dict]]:
+    """Construct the deterministic sequence of cylinder passes and staggered
+    Bénard–von Kármán vortex streets for `1 <= strokes <= 8`.
+
+    * Stage I (`strokes ~ 1.0`): Single upward pass of the rod along x = 0.5,
+      shedding an alternating Bénard–von Kármán street of smooth laminar spiral volutes.
+    * Stage II (`strokes ~ 2.2`): Tight multi-turn spiral vortex street with
+      stretched heteroclinic bridges across the central stem.
+    * Stage III (`strokes ~ 4.2`): Bi-directional foliated wake after recursive
+      counter-passes slice and fold the primary spirals into parabolic arches.
+    * Stage IV (`strokes ~ 7.0..8.0`): Deeply folded chaotic filigree via iterated
+      Lagrangian stretching-and-folding (Smale horseshoe cascade).
+    """
+    eff_strokes = float(np.clip(strokes, 0.5, 8.0))
+    max_s = min(8, int(math.ceil(eff_strokes)))
+
+    passes: list[dict] = []
+    vortices: list[dict] = []
+
+    for s in range(1, max_s + 1):
+        if s == 1:
+            w_s = float(np.clip(eff_strokes, 0.25, 1.0))
+        else:
+            w_s = float(np.clip(eff_strokes - (s - 1), 0.0, 1.0))
+        if w_s <= 1e-5:
+            continue
+
+        # Pass 1 & 2 move upward (+1) to wind the classic von Karman spiral street;
+        # passes 3..8 alternate (-1, +1) to slice and fold the wake bi-directionally.
+        dir_sign = 1.0 if s in (1, 2) else (-1.0 if s % 2 == 1 else 1.0)
+        x_jitter = (py_rand01(s, seed, S_SC_PASS, 1) - 0.5) * (0.012 if s <= 2 else 0.035)
+        x_rod = 0.50 + x_jitter
+
+        if s == 1:
+            jet_amp = 0.16 * w_s
+            jet_width = 0.082
+            n_vort = 8
+            dx_street = 0.108
+            core_r = 0.046
+            env_r = 0.145
+            omega_base = 2.55 * w_s
+        elif s == 2:
+            jet_amp = 0.11 * w_s
+            jet_width = 0.062
+            n_vort = 8
+            dx_street = 0.102
+            core_r = 0.034
+            env_r = 0.130
+            omega_base = 2.95 * w_s
+        elif s in (3, 4):
+            jet_amp = 0.17 * w_s
+            jet_width = 0.068
+            n_vort = 10 + (s - 3) * 2
+            dx_street = 0.088 + 0.045 * (s - 3)
+            core_r = 0.036
+            env_r = 0.120
+            omega_base = 2.45 * w_s
+        else:
+            jet_amp = 0.13 * w_s
+            jet_width = 0.052
+            n_vort = 12 + (s - 4) * 2
+            dx_street = 0.065 + 0.032 * ((s - 5) % 3)
+            core_r = 0.028
+            env_r = 0.095
+            omega_base = 2.15 * w_s
+
+        passes.append({
+            "stroke_idx": s,
+            "dir_sign": dir_sign,
+            "x_rod": x_rod,
+            "jet_amp": jet_amp,
+            "jet_width": jet_width,
+            "weight": w_s,
+        })
+
+        for k in range(n_vort):
+            # Alternating left (-1) and right (+1) staggered von Karman placement
+            side = -1.0 if (k % 2 == 0) else 1.0
+            jx = (py_rand01(k, seed + s * 31, S_SC_VORTEX, 2) - 0.5) * 0.014
+            jy = (py_rand01(k, seed + s * 31, S_SC_VORTEX, 3) - 0.5) * 0.012
+            vx = 0.50 + side * dx_street + jx
+            vy_base = 0.09 + 0.82 * ((k + 0.5) / float(n_vort)) + jy + 0.012 * math.sin(time_phase + k)
+            vy = float(np.clip(vy_base, 0.07, 0.93))
+            # Counter-rotating circulation: left vortices curl CCW (+1) for upward rod,
+            # right vortices curl CW (-1), rolling the wake outward and down like fern volutes
+            circ = -side * dir_sign * omega_base * (0.92 + 0.16 * py_rand01(k, seed + s, S_SC_VORTEX, 4))
+            vortices.append({
+                "stroke_idx": s,
+                "x": float(vx),
+                "y": float(vy),
+                "circ": float(circ),
+                "core_r": float(core_r),
+                "env_r": float(env_r),
+                "weight": w_s,
+            })
+
+    return passes, vortices
+
+
+def _apply_sensitive_chaos_map(x: np.ndarray,
+                               y: np.ndarray,
+                               passes: list[dict],
+                               vortices: list[dict],
+                               inverse: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    """Apply the iterated incompressible Lagrangian wake map (forward or inverse).
+
+    Each stroke consists of:
+      1. Centerline wake drag / slicing jet along the cylinder path (stretching).
+      2. Staggered Bénard–von Kármán differential vortex rotations (folding & winding).
+    """
+    mx = x.copy()
+    my = y.copy()
+    sign = -1.0 if inverse else 1.0
+
+    # Group vortices by stroke_idx
+    by_stroke: dict[int, list[dict]] = {}
+    for v in vortices:
+        by_stroke.setdefault(v["stroke_idx"], []).append(v)
+
+    ordered_passes = list(reversed(passes)) if inverse else passes
+
+    for p_info in ordered_passes:
+        s = p_info["stroke_idx"]
+        dir_sign = p_info["dir_sign"]
+        x_rod = p_info["x_rod"]
+        jet_amp = p_info["jet_amp"]
+        jet_w = p_info["jet_width"]
+        w_s = p_info["weight"]
+        s_vorts = by_stroke.get(s, [])
+
+        # Vertical window so top/bottom boundaries remain smooth
+        y_win = np.sin(np.pi * np.clip(my, 0.02, 0.98)) ** 1.2
+
+        if not inverse:
+            # Forward step 1: axial cylinder wake drag
+            jet_profile = np.exp(-0.5 * ((mx - x_rod) / jet_w) ** 2)
+            if s >= 3:
+                # Secondary flank return-flow shear for bi-directional foliation
+                flank = np.exp(-0.5 * ((np.abs(mx - x_rod) - 0.14) / (0.85 * jet_w)) ** 2)
+                jet_profile = jet_profile - 0.55 * flank
+            my = my + sign * dir_sign * jet_amp * jet_profile * y_win
+
+        # Step 2: Bénard–von Kármán vortex street rotations
+        v_list = list(reversed(s_vorts)) if inverse else s_vorts
+        for v in v_list:
+            vx = v["x"]
+            vy = v["y"]
+            circ = v["circ"]
+            rc2 = v["core_r"] ** 2
+            inv_2env2 = 1.0 / (2.0 * (v["env_r"] ** 2))
+            dx = mx - vx
+            dy = my - vy
+            r2 = dx * dx + dy * dy
+            angle = sign * circ * (rc2 / (r2 + rc2)) * np.exp(-r2 * inv_2env2)
+            cs = np.cos(angle)
+            sn = np.sin(angle)
+            mx = vx + dx * cs - dy * sn
+            my = vy + dx * sn + dy * cs
+
+        if s >= 4:
+            # Fine-scale Smale horseshoe transverse shear-folding in turbulent wake core
+            wake_mask = np.exp(-0.5 * ((mx - 0.50) / 0.24) ** 2) * y_win
+            fold_freq = 2.0 * math.pi * (3.0 + s)
+            mx = mx + sign * 0.016 * w_s * wake_mask * np.sin(fold_freq * my + s * 1.1)
+            my = my + sign * 0.022 * w_s * wake_mask * np.cos(fold_freq * mx - s * 0.7)
+
+        if inverse:
+            # Inverse step 1: undo axial cylinder wake drag
+            y_win_inv = np.sin(np.pi * np.clip(my, 0.02, 0.98)) ** 1.2
+            jet_profile = np.exp(-0.5 * ((mx - x_rod) / jet_w) ** 2)
+            if s >= 3:
+                flank = np.exp(-0.5 * ((np.abs(mx - x_rod) - 0.14) / (0.85 * jet_w)) ** 2)
+                jet_profile = jet_profile - 0.55 * flank
+            my = my + sign * dir_sign * jet_amp * jet_profile * y_win_inv
+
+    return mx, my
+
+
+def _build_sensitive_chaos_state(seed: int = 42,
+                                 strokes: float = 1.0,
+                                 frame_idx: int = 0,
+                                 time_sec: float = 0.0) -> StratifiedFlowState:
+    """Build a complete `StratifiedFlowState` for `mode='sensitive_chaos'` at `strokes`."""
+    passes, vortices = _build_sensitive_chaos_passes(strokes, seed=seed, time_phase=time_sec * 0.6)
+
+    # Advect a set of horizontal tracer material lines forward through the passes
+    # so `sc_filaments` captures the exact physical stretching and folding!
+    filaments: list[tuple[np.ndarray, np.ndarray]] = []
+    n_lines = 24
+    n_pts = 220
+    x_init = np.linspace(0.14, 0.86, n_pts, dtype=np.float64)
+    for k in range(n_lines):
+        y0_val = 0.10 + 0.80 * (k / float(n_lines - 1))
+        y_init = np.full_like(x_init, y0_val)
+        fx, fy = _apply_sensitive_chaos_map(x_init, y_init, passes, vortices, inverse=False)
+        filaments.append((np.clip(fx, 0.02, 0.98), np.clip(fy, 0.02, 0.98)))
+
+    return StratifiedFlowState(
+        mode="sensitive_chaos",
+        frame_idx=int(frame_idx),
+        time=float(time_sec),
+        seed=int(seed),
+        sc_strokes=float(strokes),
+        sc_passes=passes,
+        sc_vortices=vortices,
+        sc_filaments=filaments,
+    )
+
+
+def filament_complexity_metrics(state: StratifiedFlowState) -> dict[str, float]:
+    """Compute quantitative Lagrangian stretching and folding metrics on `state.sc_filaments`:
+      * `total_arc_length` / `total_arclength`: sum of Euclidean lengths of all advected tracer filaments
+      * `fold_count` / `reversals`: number of vertical/horizontal tangent reversals along the filaments
+    """
+    total_len = 0.0
+    folds = 0
+    for fx, fy in state.sc_filaments:
+        dx = np.diff(fx)
+        dy = np.diff(fy)
+        total_len += float(np.sum(np.hypot(dx, dy)))
+        # Count sign changes in dx and dy (Smale horseshoe hairpin folds)
+        sx = np.sign(dx)
+        sy = np.sign(dy)
+        folds += int(np.sum(sx[1:] * sx[:-1] < 0) + np.sum(sy[1:] * sy[:-1] < 0))
+    return {
+        "total_arc_length": total_len,
+        "total_arclength": total_len,
+        "fold_count": float(folds),
+        "reversals": float(folds),
+    }
+
+
+# ============================================================
 # Frame-Addressable Simulation Runner
 # ============================================================
 
 class StratifiedFlowSimulator:
-    """Deterministic, frame-addressable simulator for `kelvin_helmholtz` and `sand_strata`.
+    """Deterministic, frame-addressable simulator for `kelvin_helmholtz`,
+    `sand_strata`, and `sensitive_chaos`.
 
     Caches the most recent state so sequential frame evaluation (0, 1, 2, ...) steps
-    forward incrementally in O(1) substeps per frame, while out-of-order or repeated
-    frame requests deterministically reset or reuse the exact state for `frame_idx`.
+    forward incrementally, while out-of-order or repeated frame requests deterministically
+    reset or reuse the exact state for `frame_idx`.
     """
 
     def __init__(self,
@@ -566,7 +814,11 @@ class StratifiedFlowSimulator:
                  shear_velocity: float = 0.52,
                  n_billows: int = 3,
                  theta_max_deg: float = 14.0,
-                 rock_omega: float = 1.35):
+                 rock_omega: float = 1.35,
+                 strokes: float | None = None,
+                 strokes_start: float = 1.0,
+                 strokes_end: float = 7.5,
+                 total_frames: int = 96):
         if mode not in VALID_MODES:
             raise ValueError(f"unknown mode {mode!r}; expected one of {VALID_MODES}")
         self.mode = mode
@@ -580,9 +832,19 @@ class StratifiedFlowSimulator:
         self.n_billows = max(1, int(n_billows))
         self.theta_max_deg = float(theta_max_deg)
         self.rock_omega = float(rock_omega)
+        self.strokes = None if strokes is None else float(strokes)
+        self.strokes_start = float(strokes_start)
+        self.strokes_end = float(strokes_end)
+        self.total_frames = max(2, int(total_frames))
 
         self._state: StratifiedFlowState | None = None
         self._reset_and_warmup()
+
+    def _effective_strokes_at(self, frame_idx: int) -> float:
+        if self.strokes is not None:
+            return float(np.clip(self.strokes, 0.5, 8.0))
+        frac = float(np.clip(frame_idx / float(max(1, self.total_frames - 1)), 0.0, 1.0))
+        return self.strokes_start + frac * (self.strokes_end - self.strokes_start)
 
     def _reset_and_warmup(self) -> None:
         if self.mode == "kelvin_helmholtz":
@@ -602,16 +864,35 @@ class StratifiedFlowSimulator:
                     theta_max_deg=self.theta_max_deg,
                     rock_omega=self.rock_omega,
                 )
-        else:
+        elif self.mode == "sand_strata":
             st = _init_sand_strata_state(seed=self.seed)
             for _ in range(self.warmup_steps):
                 _step_sand_strata(st, dt=self.dt)
+        else:
+            st = _build_sensitive_chaos_state(
+                seed=self.seed,
+                strokes=self._effective_strokes_at(0),
+                frame_idx=0,
+                time_sec=0.0,
+            )
         st.frame_idx = 0
         self._state = st
 
     def state_at(self, frame_idx: int) -> StratifiedFlowState:
         """Return a snapshot of the simulation state at exact `frame_idx >= 0`."""
         target = max(0, int(frame_idx))
+        if self.mode == "sensitive_chaos":
+            t_sec = target * self.dt * self.substeps_per_frame
+            eff_s = self._effective_strokes_at(target)
+            st = _build_sensitive_chaos_state(
+                seed=self.seed,
+                strokes=eff_s,
+                frame_idx=target,
+                time_sec=t_sec,
+            )
+            self._state = st
+            return copy.deepcopy(st)
+
         if self._state is None or self._state.frame_idx > target:
             self._reset_and_warmup()
         assert self._state is not None
@@ -857,6 +1138,127 @@ def render_sand_strata(state: StratifiedFlowState,
     return np.clip(img, 0.0, 1.0).astype(np.float32)
 
 
+def render_sensitive_chaos(state: StratifiedFlowState,
+                           width: int,
+                           height: int,
+                           palette="nfb_universe_1960",
+                           sub_dx: float = 0.0,
+                           sub_dy: float = 0.0) -> np.ndarray:
+    """Render Theodor Schwenk's *Sensitive Chaos* / Hofstadter Fig 16-7 wake:
+    a striated passive surface tracer film advected by an alternating Bénard–von Kármán
+    vortex street and recursively stretched and folded into chaotic filigree.
+    """
+    anchors = resolve_palette_anchors(palette)
+    xs = (np.arange(width, dtype=np.float64) + 0.5 + float(sub_dx)) / float(width)
+    ys = 1.0 - (np.arange(height, dtype=np.float64) + 0.5 + float(sub_dy)) / float(height)
+    gx, gy = np.meshgrid(xs, ys)
+
+    # Evaluate backward Lagrangian flow map (X0, Y0) = Phi^{-1}(gx, gy)
+    x0, y0 = _apply_sensitive_chaos_map(gx, gy, state.sc_passes, state.sc_vortices, inverse=True)
+
+    # Local displacement from undisturbed position measures wake entrainment
+    disp = np.hypot(x0 - gx, y0 - gy)
+    wake_env = np.clip(disp / 0.045, 0.0, 1.0) * np.exp(-0.5 * ((gx - 0.50) / 0.36) ** 4)
+
+    # Multi-scale passive tracer striations (lycopodium / silver-powder film on water)
+    # Primary horizontal striations + fine secondary hairline striations
+    s_primary = 0.5 + 0.5 * np.cos(2.0 * math.pi * (16.0 * y0 + 0.85 * np.sin(2.0 * math.pi * x0)))
+    s_fine = 0.5 + 0.5 * np.cos(2.0 * math.pi * (38.0 * y0 - 1.4 * np.cos(2.0 * math.pi * x0)))
+    s_radial = 0.5 + 0.5 * np.cos(2.0 * math.pi * (12.0 * (x0 - 0.50)))
+
+    # Local Lagrangian stretching (Jacobian norm) highlights folded hyperbolic manifolds
+    dy_y0, dx_y0 = np.gradient(y0)
+    dy_x0, dx_x0 = np.gradient(x0)
+    stretch = np.hypot(dx_y0, dy_y0) * float(min(width, height))
+    stretch_x = np.hypot(dx_x0, dy_x0) * float(min(width, height))
+    ridge = np.clip(0.35 * (stretch + 0.6 * stretch_x) / (1.0 + 0.32 * stretch), 0.0, 1.0)
+
+    # Combine crisp laminar bands with fine folded filigree ridges
+    filigree_weight = float(np.clip((state.sc_strokes - 1.0) / 5.0, 0.0, 1.0))
+    band_pattern = (
+        (1.0 - 0.45 * filigree_weight) * (s_primary ** 1.8)
+        + (0.35 + 0.45 * filigree_weight) * (s_fine ** 2.6) * (0.4 + 0.6 * s_radial)
+    )
+    tracer_density = np.clip(
+        (0.10 + 0.90 * wake_env) * (0.68 * band_pattern + 0.48 * ridge * (0.35 + 0.65 * s_fine)),
+        0.0,
+        1.0,
+    )
+
+    # Subtle dark central stem right behind the rod tip and soft peripheral tank vignette
+    vignette = np.clip(4.0 * gy * (1.0 - gy), 0.15, 1.0) ** 0.25
+    coord = np.clip(tracer_density * vignette, 0.0, 1.0)
+    rgb = sample_palette(coord, anchors)
+    return np.clip(rgb, 0.0, 1.0).astype(np.float32)
+
+
+def render_sensitive_chaos_quartet(seed: int = 42,
+                                   width: int = 1600,
+                                   height: int = 2200,
+                                   palette="nfb_universe_1960",
+                                   stages: Sequence[float] = (1.0, 2.2, 4.2, 7.5),
+                                   samples: int = 1) -> np.ndarray:
+    """Render the 2x2 Quartet Print Plate (matching Theodor Schwenk's *Sensitive Chaos* /
+    Figure 16-7 in Hofstadter's *Metamagical Themas*):
+      * Panel I   (Top-Left)    : Smooth laminar Bénard–von Kármán spiral street
+      * Panel II  (Top-Right)   : Tight multi-turn spiral vortex street
+      * Panel III (Bottom-Left) : Bi-directional foliated wake after recursive passes
+      * Panel IV  (Bottom-Right): Deeply folded chaotic filigree
+    Framed with clean white borders on a dark substrate.
+    """
+    if len(stages) != 4:
+        raise ValueError("stages must contain 4 stroke values for the 2x2 quartet")
+
+    w = int(width)
+    h = int(height)
+    # Dark book-plate substrate
+    plate = np.full((h, w, 3), 0.035, dtype=np.float32)
+
+    margin_x = max(16, int(round(w * 0.042)))
+    margin_y = max(16, int(round(h * 0.036)))
+    gutter_x = max(12, int(round(w * 0.032)))
+    gutter_y = max(12, int(round(h * 0.028)))
+    border_px = max(2, int(round(min(w, h) * 0.0035)))
+    inner_pad = max(1, border_px // 2)
+
+    panel_w = (w - 2 * margin_x - gutter_x) // 2
+    panel_h = (h - 2 * margin_y - gutter_y) // 2
+    inner_w = panel_w - 2 * (border_px + inner_pad)
+    inner_h = panel_h - 2 * (border_px + inner_pad)
+
+    offsets = supersample_offsets(max(1, int(samples)))
+
+    for idx, stroke_val in enumerate(stages):
+        row = idx // 2
+        col = idx % 2
+        x0 = margin_x + col * (panel_w + gutter_x)
+        y0 = margin_y + row * (panel_h + gutter_y)
+
+        # Clean white outer border frame around each panel
+        plate[y0 : y0 + panel_h, x0 : x0 + panel_w] = 0.96
+        # Thin dark mat inset inside the white border
+        plate[
+            y0 + border_px : y0 + panel_h - border_px,
+            x0 + border_px : x0 + panel_w - border_px,
+        ] = 0.04
+
+        st = _build_sensitive_chaos_state(
+            seed=seed, strokes=float(stroke_val), frame_idx=idx * 24, time_sec=float(idx) * 0.5
+        )
+        acc = np.zeros((inner_h, inner_w, 3), dtype=np.float64)
+        for dx, dy in offsets:
+            acc += render_sensitive_chaos(
+                st, inner_w, inner_h, palette=palette, sub_dx=dx, sub_dy=dy
+            )
+        panel_img = (acc / len(offsets)).astype(np.float32)
+
+        iy0 = y0 + border_px + inner_pad
+        ix0 = x0 + border_px + inner_pad
+        plate[iy0 : iy0 + inner_h, ix0 : ix0 + inner_w] = panel_img
+
+    return np.clip(plate, 0.0, 1.0).astype(np.float32)
+
+
 def render_stratified_frame(state: StratifiedFlowState,
                             width: int,
                             height: int,
@@ -868,6 +1270,8 @@ def render_stratified_frame(state: StratifiedFlowState,
         return render_kelvin_helmholtz(state, width, height, palette=palette, sub_dx=sub_dx, sub_dy=sub_dy)
     elif state.mode == "sand_strata":
         return render_sand_strata(state, width, height, palette=palette, sub_dx=sub_dx, sub_dy=sub_dy)
+    elif state.mode == "sensitive_chaos":
+        return render_sensitive_chaos(state, width, height, palette=palette, sub_dx=sub_dx, sub_dy=sub_dy)
     raise ValueError(f"unknown mode {state.mode!r}")
 
 
@@ -896,13 +1300,119 @@ if _HAS_TAICHI:
 # Native MetaPost Contour & Horizon Exporter (--export-metapost)
 # ============================================================
 
+def _append_sensitive_chaos_panel_mp(lines: list[str],
+                                     state: StratifiedFlowState,
+                                     x_off: float,
+                                     y_off: float,
+                                     w_bp: float,
+                                     h_bp: float,
+                                     anchors: np.ndarray,
+                                     panel_id: int = 0) -> None:
+    """Append MetaPost commands drawing a single `sensitive_chaos` wake panel."""
+    bg_r, bg_g, bg_b = [float(c) for c in anchors[0] * 0.25]
+    hi_r, hi_g, hi_b = [float(c) for c in anchors[-1]]
+    mid_r, mid_g, mid_b = [float(c) for c in sample_palette(np.array([0.65]), anchors)[0]]
+    sfx = chr(ord("a") + (int(panel_id) % 26))
+
+    lines.append(f"  % Panel {panel_id} (strokes={state.sc_strokes:.2f})")
+    lines.append(f"  picture pic_{sfx}; pic_{sfx} := nullpicture;")
+    lines.append(
+        f"  path box_{sfx}; box_{sfx} := "
+        f"({x_off:.2f}bp,{y_off:.2f}bp)--({x_off + w_bp:.2f}bp,{y_off:.2f}bp)--"
+        f"({x_off + w_bp:.2f}bp,{y_off + h_bp:.2f}bp)--({x_off:.2f}bp,{y_off + h_bp:.2f}bp)--cycle;"
+    )
+    lines.append(f"  addto pic_{sfx} contour box_{sfx} withcolor ({bg_r:.4f}, {bg_g:.4f}, {bg_b:.4f});")
+
+    # Draw advected Lagrangian tracer filaments
+    for f_idx, (fx, fy) in enumerate(state.sc_filaments):
+        step = max(1, len(fx) // 70)
+        pxs = x_off + np.clip(fx[::step], 0.02, 0.98) * w_bp
+        pys = y_off + np.clip(fy[::step], 0.02, 0.98) * h_bp
+        pts_str = "--".join(f"({px:.2f}bp,{py:.2f}bp)" for px, py in zip(pxs, pys))
+        col = (hi_r, hi_g, hi_b) if f_idx % 2 == 0 else (mid_r, mid_g, mid_b)
+        pen_w = 0.65 if state.sc_strokes <= 2.5 else 0.45
+        lines.append(
+            f"  addto pic_{sfx} doublepath ({pts_str}) withpen pencircle scaled {pen_w:.2f}bp "
+            f"withcolor ({col[0]:.4f}, {col[1]:.4f}, {col[2]:.4f});"
+        )
+
+    # Draw primary Bénard–von Kármán spiral volutes
+    for v in state.sc_vortices[:12]:
+        vx = x_off + v["x"] * w_bp
+        vy = y_off + v["y"] * h_bp
+        rad = v["core_r"] * min(w_bp, h_bp) * 1.15
+        lines.append(
+            f"  addto pic_{sfx} doublepath (fullcircle scaled {2*rad:.2f}bp shifted ({vx:.2f}bp,{vy:.2f}bp)) "
+            f"withpen pencircle scaled 0.50bp withcolor ({hi_r:.4f}, {hi_g:.4f}, {hi_b:.4f});"
+        )
+
+    lines.append(f"  clip pic_{sfx} to box_{sfx};")
+    lines.append(f"  draw pic_{sfx};")
+    lines.append("  pickup pencircle scaled 1.4bp;")
+    lines.append(f"  draw box_{sfx} withcolor (0.9600, 0.9600, 0.9600);")
+
+
+def export_metapost_quartet(out_path: str | Path,
+                            seed: int = 42,
+                            scale_bp: float = 240.0,
+                            palette="nfb_universe_1960",
+                            stages: Sequence[float] = (1.0, 2.2, 4.2, 7.5)) -> str:
+    """Export a self-contained 2x2 Quartet Print Plate MetaPost figure (`beginfig(1); ... endfig;`)
+    matching the 4-stage progression of *Sensitive Chaos* (Panels I, II, III, IV).
+    """
+    anchors = resolve_palette_anchors(palette)
+    w_bp = float(scale_bp) * (16.0 / 22.0) * 2.0
+    h_bp = float(scale_bp) * 2.0
+
+    margin_x = w_bp * 0.045
+    margin_y = h_bp * 0.038
+    gutter_x = w_bp * 0.035
+    gutter_y = h_bp * 0.030
+    panel_w = (w_bp - 2.0 * margin_x - gutter_x) / 2.0
+    panel_h = (h_bp - 2.0 * margin_y - gutter_y) / 2.0
+
+    lines: list[str] = [
+        "% Generated by cosmic_engine render.stratified_flow (Sensitive Chaos 2x2 Quartet)",
+        f"% seed: {seed}, stages: {list(stages)}",
+        "prologues := 3;",
+        'outputtemplate := "%j-%c.mps";',
+        "beginfig(1);",
+        f"  numeric W, H; W := {w_bp:.3f}bp; H := {h_bp:.3f}bp;",
+        "  path plate_box;",
+        "  plate_box := (0, 0)--(W, 0)--(W, H)--(0, H)--cycle;",
+        "  fill plate_box withcolor (0.0350, 0.0350, 0.0400);",
+    ]
+
+    for idx, stroke_val in enumerate(stages):
+        row = idx // 2
+        col = idx % 2
+        # Top row (row 0) has higher y in PostScript coordinates
+        x_off = margin_x + col * (panel_w + gutter_x)
+        y_off = margin_y + (1 - row) * (panel_h + gutter_y)
+        st = _build_sensitive_chaos_state(
+            seed=seed, strokes=float(stroke_val), frame_idx=idx * 24, time_sec=float(idx) * 0.5
+        )
+        _append_sensitive_chaos_panel_mp(
+            lines, st, x_off, y_off, panel_w, panel_h, anchors, panel_id=idx + 1
+        )
+
+    lines.append("endfig;")
+    lines.append("end;")
+    content = "\n".join(lines) + "\n"
+    out_p = Path(out_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    out_p.write_text(content, encoding="utf-8")
+    return content
+
+
 def export_metapost(state: StratifiedFlowState,
                     out_path: str | Path,
                     scale_bp: float = 240.0,
                     palette="trumbull_2001") -> str:
     """Export a self-contained, valid MetaPost figure (`beginfig(1); ... endfig;`)
-    of the overturning Kelvin-Helmholtz interface contour or the stacked sedimentary
-    horizon polylines in `sand_strata` mode.
+    of the overturning Kelvin-Helmholtz interface contour, the stacked sedimentary
+    horizon polylines in `sand_strata` mode, or the Bénard–von Kármán / chaotic
+    filigree filaments in `sensitive_chaos` mode.
     """
     anchors = resolve_palette_anchors(palette)
     w_bp = float(scale_bp) * (16.0 / 9.0)
@@ -958,7 +1468,7 @@ def export_metapost(state: StratifiedFlowState,
                     f"  draw fullcircle xscaled {2*rx:.2f}bp yscaled {2*ry:.2f}bp shifted ({cx:.2f}bp,{cy:.2f}bp) "
                     f"withcolor ({hi_r:.4f}, {hi_g:.4f}, {hi_b:.4f});"
                 )
-    else:
+    elif state.mode == "sand_strata":
         # sand_strata mode: export stacked sedimentary horizon polylines, plumes, and bubble barrier
         gx = state.grid_x
         step = max(1, len(gx) // 100)
@@ -999,6 +1509,8 @@ def export_metapost(state: StratifiedFlowState,
                 f"  draw fullcircle scaled {diam:.2f}bp shifted ({cx:.2f}bp,{cy:.2f}bp) "
                 f"withcolor ({hi_r:.4f}, {hi_g:.4f}, {hi_b:.4f});"
             )
+    else:
+        _append_sensitive_chaos_panel_mp(lines, state, 0.0, 0.0, w_bp, h_bp, anchors, panel_id=1)
 
     lines.append("  clip currentpicture to frame_box;")
     lines.append("  pickup pencircle scaled 1.0bp;")
@@ -1017,11 +1529,28 @@ def export_metapost(state: StratifiedFlowState,
 # CLI
 # ============================================================
 
+def _write_image_or_npy(out_path: str, rgb: np.ndarray) -> None:
+    if out_path.endswith(".npy"):
+        np.save(out_path, rgb)
+    else:
+        img8 = (np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
+        try:
+            import imageio.v3 as iio
+            iio.imwrite(out_path, img8)
+        except ImportError:
+            import cv2
+            cv2.imwrite(out_path, cv2.cvtColor(img8, cv2.COLOR_RGB2BGR))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="stratified_flow")
     parser.add_argument("--mode", default="kelvin_helmholtz", choices=VALID_MODES)
     parser.add_argument("--frame", type=int, default=48,
                         help="target simulation frame index to render")
+    parser.add_argument("--strokes", type=float, default=None,
+                        help="number of obstacle passes (1..8) for sensitive_chaos mode")
+    parser.add_argument("--quartet", default=None,
+                        help="render the 2x2 Quartet Print Plate of sensitive_chaos to <out.png>")
     parser.add_argument("--warmup-steps", type=int, default=18)
     parser.add_argument("--substeps", type=int, default=2)
     parser.add_argument("--dt", type=float, default=0.028)
@@ -1029,9 +1558,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--viscosity", type=float, default=0.004)
     parser.add_argument("--shear-velocity", type=float, default=0.52)
     parser.add_argument("--n-billows", type=int, default=3)
-    parser.add_argument("--palette", default="trumbull_2001")
-    parser.add_argument("--width", type=int, default=960)
-    parser.add_argument("--height", type=int, default=540)
+    parser.add_argument("--palette", default=None)
+    parser.add_argument("--width", type=int, default=None)
+    parser.add_argument("--height", type=int, default=None)
     parser.add_argument("--samples", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--scale-bp", type=float, default=240.0)
@@ -1040,6 +1569,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", default=None,
                         help="output image (.png or .npy)")
     args = parser.parse_args(argv)
+
+    if args.quartet:
+        q_width = args.width if args.width is not None else 1600
+        q_height = args.height if args.height is not None else 2200
+        q_palette = args.palette if args.palette is not None else "nfb_universe_1960"
+        plate = render_sensitive_chaos_quartet(
+            seed=args.seed,
+            width=q_width,
+            height=q_height,
+            palette=q_palette,
+            samples=args.samples,
+        )
+        _write_image_or_npy(args.quartet, plate)
+        print(f"wrote 2x2 sensitive_chaos quartet plate to {args.quartet} ({q_width}x{q_height})")
+        if args.export_metapost:
+            export_metapost_quartet(
+                args.export_metapost,
+                seed=args.seed,
+                scale_bp=args.scale_bp,
+                palette=q_palette,
+            )
+            print(f"exported 2x2 quartet MetaPost figure to {args.export_metapost}")
+        return 0
+
+    width = args.width if args.width is not None else 960
+    height = args.height if args.height is not None else 540
+    palette = args.palette if args.palette is not None else (
+        "nfb_universe_1960" if args.mode == "sensitive_chaos" else "trumbull_2001"
+    )
 
     sim = StratifiedFlowSimulator(
         mode=args.mode,
@@ -1051,38 +1609,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         viscosity=args.viscosity,
         shear_velocity=args.shear_velocity,
         n_billows=args.n_billows,
+        strokes=args.strokes,
     )
     state = sim.state_at(args.frame)
 
     if args.export_metapost:
-        export_metapost(state, args.export_metapost, scale_bp=args.scale_bp, palette=args.palette)
+        export_metapost(state, args.export_metapost, scale_bp=args.scale_bp, palette=palette)
         print(f"exported MetaPost contour/horizon figure to {args.export_metapost} (mode={args.mode}, frame={args.frame})")
 
     if args.out:
         offsets = supersample_offsets(max(1, int(args.samples)))
-        acc = np.zeros((args.height, args.width, 3), dtype=np.float64)
+        acc = np.zeros((height, width, 3), dtype=np.float64)
         for dx, dy in offsets:
             acc += render_stratified_frame(
-                state, args.width, args.height, palette=args.palette, sub_dx=dx, sub_dy=dy
+                state, width, height, palette=palette, sub_dx=dx, sub_dy=dy
             )
         rgb = (acc / len(offsets)).astype(np.float32)
-        if args.out.endswith(".npy"):
-            np.save(args.out, rgb)
-        else:
-            img8 = (np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
-            try:
-                import imageio.v3 as iio
-                iio.imwrite(args.out, img8)
-            except ImportError:
-                import cv2
-                cv2.imwrite(args.out, cv2.cvtColor(img8, cv2.COLOR_RGB2BGR))
-        print(f"wrote {args.out} ({args.width}x{args.height}, mode={args.mode}, frame={args.frame})")
+        _write_image_or_npy(args.out, rgb)
+        print(f"wrote {args.out} ({width}x{height}, mode={args.mode}, frame={args.frame})")
 
-    if not args.out and not args.export_metapost:
-        parser.error("at least one of --out or --export-metapost is required")
+    if not args.out and not args.export_metapost and not args.quartet:
+        parser.error("at least one of --out, --quartet, or --export-metapost is required")
 
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

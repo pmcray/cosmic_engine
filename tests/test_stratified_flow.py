@@ -120,7 +120,7 @@ def test_detrng_parity_and_frame_addressable_reproducibility() -> None:
             assert abs(float(vec_vals[r, c]) - ref) < 1e-12
 
     # Sequential stepping vs direct jump vs out-of-order rewind must match bit-for-bit
-    for mode in ("kelvin_helmholtz", "sand_strata"):
+    for mode in ("kelvin_helmholtz", "sand_strata", "sensitive_chaos"):
         sim_seq = StratifiedFlowSimulator(mode=mode, seed=99)
         for f in range(15):
             _ = sim_seq.state_at(f)
@@ -136,19 +136,116 @@ def test_detrng_parity_and_frame_addressable_reproducibility() -> None:
             assert np.array_equal(st_seq.kh_y, st_jump.kh_y)
             assert np.array_equal(st_seq.kh_x, st_jump_again.kh_x)
             assert not np.array_equal(st_rewind.kh_x, st_jump.kh_x)
-        else:
+        elif mode == "sand_strata":
             assert np.array_equal(st_seq.horizons[-1], st_jump.horizons[-1])
             assert np.array_equal(st_seq.horizons[-1], st_jump_again.horizons[-1])
             assert not np.array_equal(st_rewind.horizons[-1], st_jump.horizons[-1])
+        else:
+            assert abs(st_seq.sc_strokes - st_jump.sc_strokes) < 1e-12
+            assert np.array_equal(st_seq.sc_filaments[0], st_jump.sc_filaments[0])
+            assert np.array_equal(st_seq.sc_filaments[0], st_jump_again.sc_filaments[0])
+            assert not np.array_equal(st_rewind.sc_filaments[0], st_jump.sc_filaments[0])
 
 
-# ---- 4. Native MetaPost Contour & Horizon Exporter -------------------
+# ---- 4. Mode 3: Sensitive Chaos & 2x2 Quartet Plate ------------------
 
-def test_export_metapost_both_modes_and_mpost_compile(tmp_path: Path) -> None:
+def test_sensitive_chaos_von_karman_stretching_and_folding() -> None:
+    from render.stratified_flow import (
+        StratifiedFlowSimulator,
+        filament_complexity_metrics,
+        render_stratified_frame,
+    )
+
+    # Verify alternating Bénard-von Kármán vortex street and monotonic
+    # Lagrangian stretching & folding across strokes 1 -> 2 -> 4 -> 7
+    metrics_by_stroke = {}
+    for s_val in (1.0, 2.2, 4.4, 7.2):
+        sim = StratifiedFlowSimulator(mode="sensitive_chaos", seed=42, strokes=s_val)
+        st = sim.state_at(0)
+        assert abs(st.sc_strokes - s_val) < 1e-9
+        assert len(st.sc_vortices) >= 8
+        assert len(st.sc_filaments) > 20
+        # Alternating signs in primary pass vortex street
+        pass0_signs = [v["circ"] for v in st.sc_vortices[:8]]
+        for idx in range(1, len(pass0_signs)):
+            assert pass0_signs[idx] * pass0_signs[idx - 1] < 0.0
+        metrics_by_stroke[s_val] = filament_complexity_metrics(st)
+
+    # Total arc length and direction reversals (folds) increase strictly with strokes
+    assert metrics_by_stroke[2.2]["total_arclength"] > metrics_by_stroke[1.0]["total_arclength"] * 1.15
+    assert metrics_by_stroke[4.4]["total_arclength"] > metrics_by_stroke[2.2]["total_arclength"] * 1.20
+    assert metrics_by_stroke[7.2]["total_arclength"] > metrics_by_stroke[4.4]["total_arclength"] * 1.15
+    assert metrics_by_stroke[7.2]["reversals"] > metrics_by_stroke[1.0]["reversals"]
+
+    # Render single sensitive_chaos frame
+    sim_single = StratifiedFlowSimulator(mode="sensitive_chaos", seed=42, strokes=4.0)
+    img = render_stratified_frame(sim_single.state_at(10), 96, 128, palette="trumbull_2001")
+    assert img.shape == (128, 96, 3) and img.dtype == np.float32
+    assert np.isfinite(img).all()
+    assert img.min() >= 0.0 and img.max() <= 1.0
+    assert img.std() > 0.08
+
+
+def test_sensitive_chaos_quartet_plate_and_metapost(tmp_path: Path) -> None:
+    from render.stratified_flow import (
+        export_metapost_quartet,
+        main,
+        render_sensitive_chaos_quartet,
+    )
+
+    plate = render_sensitive_chaos_quartet(
+        seed=42, width=160, height=220, palette="trumbull_2001"
+    )
+    assert plate.shape == (220, 160, 3) and plate.dtype == np.float32
+    assert np.isfinite(plate).all()
+    assert plate.min() >= 0.0 and plate.max() <= 1.0
+    # Verify crisp white border lines and non-identical quadrants
+    q_tl = plate[15:95, 15:70]
+    q_tr = plate[15:95, 90:145]
+    q_bl = plate[125:205, 15:70]
+    q_br = plate[125:205, 90:145]
+    assert not np.allclose(q_tl, q_tr)
+    assert not np.allclose(q_bl, q_br)
+    assert not np.allclose(q_tl, q_br)
+
+    mp_quartet = tmp_path / "quartet.mp"
+    content = export_metapost_quartet(mp_quartet, seed=42, scale_bp=160.0)
+    assert mp_quartet.exists()
+    assert "Panel 1" in content and "Panel 4" in content
+
+    mpost_bin = shutil.which("mpost")
+    if mpost_bin:
+        res = subprocess.run(
+            [mpost_bin, "-interaction=nonstopmode", mp_quartet.name],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, f"mpost failed on quartet:\n{res.stdout}\n{res.stderr}"
+        assert (tmp_path / "quartet-1.mps").exists()
+
+    # Verify --quartet CLI option with --export-metapost
+    out_q_png = tmp_path / "cli_quartet.png"
+    out_q_mp = tmp_path / "cli_quartet.mp"
+    rc = main([
+        "--quartet", str(out_q_png),
+        "--width", "160",
+        "--height", "220",
+        "--export-metapost", str(out_q_mp),
+    ])
+    assert rc == 0
+    assert out_q_png.exists() and out_q_png.stat().st_size > 1000
+    assert out_q_mp.exists() and out_q_mp.stat().st_size > 1000
+
+
+# ---- 5. Native MetaPost Contour & Horizon Exporter -------------------
+
+def test_export_metapost_all_modes_and_mpost_compile(tmp_path: Path) -> None:
     from render.stratified_flow import StratifiedFlowSimulator, export_metapost
 
     mpost_bin = shutil.which("mpost")
-    for mode in ("kelvin_helmholtz", "sand_strata"):
+    for mode in ("kelvin_helmholtz", "sand_strata", "sensitive_chaos"):
         sim = StratifiedFlowSimulator(mode=mode, seed=42)
         state = sim.state_at(24)
         mp_file = tmp_path / f"test_{mode}.mp"
@@ -171,7 +268,7 @@ def test_export_metapost_both_modes_and_mpost_compile(tmp_path: Path) -> None:
             assert (tmp_path / f"test_{mode}-1.mps").exists()
 
 
-# ---- 5. Adapter, Voyage Composer & CLI -------------------------------
+# ---- 6. Adapter, Voyage Composer & CLI -------------------------------
 
 def test_stratified_flow_adapter_and_composer_wiring(tmp_path: Path) -> None:
     import render.adapters  # noqa: F401
@@ -182,7 +279,7 @@ def test_stratified_flow_adapter_and_composer_wiring(tmp_path: Path) -> None:
 
     assert "stratified_flow" in list_renderers()
 
-    for mode in ("kelvin_helmholtz", "sand_strata"):
+    for mode in ("kelvin_helmholtz", "sand_strata", "sensitive_chaos"):
         shot = Shot(
             id=f"shot_{mode}",
             renderer="stratified_flow",
@@ -218,3 +315,4 @@ def test_stratified_flow_adapter_and_composer_wiring(tmp_path: Path) -> None:
     assert rc == 0
     assert out_png.exists() and out_png.stat().st_size > 500
     assert out_mp.exists() and out_mp.stat().st_size > 500
+
