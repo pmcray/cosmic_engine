@@ -1219,6 +1219,18 @@ class StratifiedFlowRenderer(Renderer):
         self._palette = get_palette(shot.palette.name)
 
         strokes_val = p.get("strokes", None)
+        import inspect
+        sim_sig = inspect.signature(sf.StratifiedFlowSimulator.__init__).parameters
+        extra_sf_kwargs = {}
+        if "strokes" in sim_sig:
+            extra_sf_kwargs["strokes"] = float(strokes_val) if strokes_val is not None else None
+        if "strokes_start" in sim_sig:
+            extra_sf_kwargs["strokes_start"] = float(p.get("strokes_start", 1.0))
+        if "strokes_end" in sim_sig:
+            extra_sf_kwargs["strokes_end"] = float(p.get("strokes_end", 7.5))
+        if "total_frames" in sim_sig:
+            extra_sf_kwargs["total_frames"] = max(2, int(shot.duration_frames))
+
         self._sim = sf.StratifiedFlowSimulator(
             mode=self._mode,
             seed=self._seed,
@@ -1231,10 +1243,7 @@ class StratifiedFlowRenderer(Renderer):
             n_billows=int(p.get("n_billows", 3)),
             theta_max_deg=float(p.get("theta_max_deg", 14.0)),
             rock_omega=float(p.get("rock_omega", 1.35)),
-            strokes=float(strokes_val) if strokes_val is not None else None,
-            strokes_start=float(p.get("strokes_start", 1.0)),
-            strokes_end=float(p.get("strokes_end", 7.5)),
-            total_frames=max(2, int(shot.duration_frames)),
+            **extra_sf_kwargs,
         )
 
         engine = str(p.get("engine", "auto"))
